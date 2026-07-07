@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Scenario } from '../types/index.js';
 import { DEFAULT_SCENARIOS } from '../data/scenarios.js';
 import { FileCode, AlertCircle, Sparkles, ChevronDown, Upload } from 'lucide-react';
@@ -27,6 +27,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   
   const [isDragging, setIsDragging] = useState(false);
   const [applySuccess, setApplySuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleParseScenario = async (content: string) => {
     setError(null);
@@ -171,12 +172,25 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
         >
           <div className="flex flex-col gap-1.5 mb-2.5">
             <label className="block text-[9px] text-brand-muted uppercase font-mono italic">Scenario Markdown Source</label>
-            <input
-              type="file"
-              onChange={handleFileUpload}
-              accept=".md,.txt"
-              className="w-full text-xs font-mono text-brand-muted bg-brand-bg border border-brand-border p-1.5 rounded-none cursor-pointer file:mr-3 file:py-1 file:px-2.5 file:border-0 file:text-[10px] file:font-mono file:font-bold file:uppercase file:bg-brand-green file:text-brand-bg hover:file:opacity-90 file:cursor-pointer transition-colors"
-            />
+            <div 
+              onClick={() => fileInputRef.current?.click()}
+              className="group relative flex flex-col items-center justify-center border border-dashed border-brand-border hover:border-brand-green bg-brand-panel hover:bg-brand-row/50 p-4 rounded-none cursor-pointer text-center transition-all duration-200"
+            >
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                accept=".md,.txt"
+                className="hidden"
+              />
+              <Upload className="w-5 h-5 text-brand-muted group-hover:text-brand-green mb-1.5 group-hover:scale-110 transition-all duration-200" />
+              <div className="text-[10px] font-mono font-bold text-brand-text uppercase tracking-wider mb-0.5">
+                Drag & Drop Scenario File
+              </div>
+              <div className="text-[9px] font-mono text-brand-muted">
+                or click to browse (.md, .txt)
+              </div>
+            </div>
           </div>
           <div className="relative flex-grow flex flex-col">
             <textarea
