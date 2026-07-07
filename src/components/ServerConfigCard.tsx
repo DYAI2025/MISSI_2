@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { GameMode, Difficulty, MinecraftServerConfig } from '../types/index.js';
 import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle, Layers } from 'lucide-react';
+import { usePersistence } from '../hooks/usePersistence.js';
 
 interface ServerConfigCardProps {
   serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
@@ -38,35 +39,74 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [useEmulator, setUseEmulator] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
-  // Server Save-State indicators
-  const [serverSaveStatus, setServerSaveStatus] = useState<'saved' | 'unsaved' | 'saving' | 'failed'>('saved');
-  const [serverLastSavedAt, setServerLastSavedAt] = useState<string | null>(null);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // Synchronize config prop with local editing states
+  useEffect(() => {
+    setServerName(config.serverName);
+    setSeed(config.seed);
+    setLevelName(config.levelName);
+    setGameMode(config.gameMode);
+    setDifficulty(config.difficulty);
+    setPort(config.port);
+  }, [config]);
 
   // Workspace Preference States
   const [defaultProviderId, setDefaultProviderId] = useState('gemini');
   const [intervalMs, setIntervalMs] = useState(8000);
-  const [workspaceSaveStatus, setWorkspaceSaveStatus] = useState<'saved' | 'unsaved' | 'saving' | 'failed'>('saved');
-  const [workspaceLastSavedAt, setWorkspaceLastSavedAt] = useState<string | null>(null);
-  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
-  const [savedWorkspaceConfig, setSavedWorkspaceConfig] = useState<{ defaultProviderId?: string; intervalMs?: number }>({
+  const [savedWorkspaceConfig, setSavedWorkspaceConfig] = useState<{ defaultProviderId: string; intervalMs: number }>({
     defaultProviderId: 'gemini',
     intervalMs: 8000,
   });
 
-  // Check if current form values are different from saved server properties
-  const hasUnsavedServerChanges = 
-    serverName !== config.serverName ||
-    seed !== config.seed ||
-    levelName !== config.levelName ||
-    gameMode !== config.gameMode ||
-    difficulty !== config.difficulty ||
-    port !== config.port;
+  // Build current forms state objects to pass to usePersistence
+  const currentServerValue = useMemo(() => ({
+    serverName,
+    seed,
+    levelName,
+    gameMode,
+    difficulty,
+    port: Number(port),
+  }), [serverName, seed, levelName, gameMode, difficulty, port]);
 
-  // Check if current form values are different from saved workspace properties
-  const hasUnsavedWorkspaceChanges =
-    defaultProviderId !== savedWorkspaceConfig.defaultProviderId ||
-    intervalMs !== savedWorkspaceConfig.intervalMs;
+  const currentWorkspaceValue = useMemo(() => ({
+    defaultProviderId,
+    intervalMs: Number(intervalMs),
+  }), [defaultProviderId, intervalMs]);
+
+  // Hook-based Persistence State for Server Config
+  const serverPersistence = usePersistence<MinecraftServerConfig>(config, currentServerValue, {
+    onSave: async (val) => {
+      setIsSaving(true);
+      try {
+        await onUpdateConfig(val);
+      } finally {
+        setIsSaving(false);
+      }
+    }
+  });
+
+  // Hook-based Persistence State for Workspace Preferences
+  const workspacePersistence = usePersistence<{ defaultProviderId: string; intervalMs: number }>(
+    savedWorkspaceConfig,
+    currentWorkspaceValue,
+    {
+      onSave: async (val) => {
+        const res = await fetch('/api/settings/workspace', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(val),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || 'Failed to save workspace settings.');
+        }
+        const data = await res.json();
+        setSavedWorkspaceConfig({
+          defaultProviderId: data.config.defaultProviderId || 'gemini',
+          intervalMs: Number(data.config.intervalMs) || 8000,
+        });
+      }
+    }
+  );
 
   // State manager for tracking dirty fields reactively
   const [dirtyFields, setDirtyFields] = useState<Record<string, boolean>>({});
@@ -97,12 +137,13 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           const data = await res.json();
           if (data && data.config) {
             setDefaultProviderId(data.config.defaultProviderId || 'gemini');
-            setIntervalMs(data.config.intervalMs || 8000);
+            setIntervalMs(Number(data.config.intervalMs) || 8000);
             setSavedWorkspaceConfig({
               defaultProviderId: data.config.defaultProviderId || 'gemini',
-              intervalMs: data.config.intervalMs || 8000,
+              intervalMs: Number(data.config.intervalMs) || 8000,
             });
-            setWorkspaceLastSavedAt(new Date().toISOString());
+            // Mark loaded config as saved
+            workspacePersistence.setStatus('saved');
           }
         }
       } catch (err) {
@@ -156,56 +197,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setServerError(null);
-    setServerSaveStatus('saving');
-    setIsSaving(true);
-    try {
-      await onUpdateConfig({
-        serverName,
-        seed,
-        levelName,
-        gameMode,
-        difficulty,
-        port: Number(port),
-      });
-      setServerSaveStatus('saved');
-      setServerLastSavedAt(new Date().toISOString());
-    } catch (err: any) {
-      setServerError(err.message || 'Failed to save server config.');
-      setServerSaveStatus('failed');
-    } finally {
-      setIsSaving(false);
-    }
+    await serverPersistence.save();
   };
 
   const handleSaveWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
-    setWorkspaceError(null);
-    setWorkspaceSaveStatus('saving');
-    try {
-      const res = await fetch('/api/settings/workspace', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          defaultProviderId,
-          intervalMs,
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || 'Failed to save workspace settings.');
-      }
-      const data = await res.json();
-      setSavedWorkspaceConfig({
-        defaultProviderId: data.config.defaultProviderId,
-        intervalMs: data.config.intervalMs,
-      });
-      setWorkspaceSaveStatus('saved');
-      setWorkspaceLastSavedAt(new Date().toISOString());
-    } catch (err: any) {
-      setWorkspaceError(err.message || 'Failed to save workspace preferences.');
-      setWorkspaceSaveStatus('failed');
-    }
+    await workspacePersistence.save();
   };
 
   const handleCommandSubmit = (e: React.FormEvent) => {
@@ -242,27 +239,27 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         </div>
         <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
           {/* Server Config Save-State Indicators */}
-          {serverSaveStatus === 'saving' && (
+          {serverPersistence.status === 'saving' && (
             <span className="text-[9px] font-mono text-yellow-500 uppercase animate-pulse">Saving...</span>
           )}
-          {serverSaveStatus === 'failed' && (
+          {serverPersistence.status === 'failed' && (
             <span className="text-[9px] font-mono text-red-500 uppercase font-bold">Save Failed</span>
           )}
-          {serverSaveStatus === 'saved' && !hasUnsavedServerChanges && (
+          {serverPersistence.status === 'saved' && (
             <span className="text-[9px] font-mono text-brand-green uppercase font-bold flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-brand-green" />
               Saved
             </span>
           )}
-          {hasUnsavedServerChanges && serverSaveStatus !== 'saving' && (
+          {serverPersistence.status === 'unsaved' && (
             <span className="text-[9px] font-mono text-yellow-500 uppercase font-bold flex items-center gap-1 animate-pulse">
               <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
               Unsaved
             </span>
           )}
-          {serverLastSavedAt && (
+          {serverPersistence.lastSavedAt && (
             <span className="text-[8px] font-mono text-brand-muted opacity-65">
-              Last: {new Date(serverLastSavedAt).toLocaleTimeString()}
+              Last: {new Date(serverPersistence.lastSavedAt).toLocaleTimeString()}
             </span>
           )}
           <div className="h-3 w-px bg-brand-border mx-1" />
@@ -391,7 +388,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </div>
         )}
       </form>
-
+      {serverPersistence.error && (
+        <div className="mt-3 bg-red-950/40 border border-red-500/30 p-2 text-[9px] font-mono text-red-400">
+          {serverPersistence.error}
+        </div>
+      )}
+ 
       {/* Workspace Preferences Section */}
       <div id="workspace-preferences-section" className="mt-6 border-t border-brand-border pt-4">
         <div className="flex items-center justify-between mb-4">
@@ -401,32 +403,32 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </div>
           <div className="flex items-center gap-2">
             {/* Status indicator */}
-            {workspaceSaveStatus === 'saving' && (
+            {workspacePersistence.status === 'saving' && (
               <span className="text-[9px] font-mono text-yellow-500 uppercase animate-pulse">Saving...</span>
             )}
-            {workspaceSaveStatus === 'failed' && (
+            {workspacePersistence.status === 'failed' && (
               <span className="text-[9px] font-mono text-red-500 uppercase font-bold">Save Failed</span>
             )}
-            {workspaceSaveStatus === 'saved' && !hasUnsavedWorkspaceChanges && (
+            {workspacePersistence.status === 'saved' && (
               <span className="text-[9px] font-mono text-brand-green uppercase font-bold flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-brand-green" />
                 Saved
               </span>
             )}
-            {hasUnsavedWorkspaceChanges && workspaceSaveStatus !== 'saving' && (
+            {workspacePersistence.status === 'unsaved' && (
               <span className="text-[9px] font-mono text-yellow-500 uppercase font-bold flex items-center gap-1 animate-pulse">
                 <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
                 Unsaved
               </span>
             )}
-            {workspaceLastSavedAt && (
+            {workspacePersistence.lastSavedAt && (
               <span className="text-[8px] font-mono text-brand-muted opacity-65">
-                Last: {new Date(workspaceLastSavedAt).toLocaleTimeString()}
+                Last: {new Date(workspacePersistence.lastSavedAt).toLocaleTimeString()}
               </span>
             )}
           </div>
         </div>
-
+ 
         <form onSubmit={handleSaveWorkspace} className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
@@ -470,16 +472,16 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
             </span>
             <button
               type="submit"
-              disabled={workspaceSaveStatus === 'saving'}
+              disabled={workspacePersistence.status === 'saving'}
               className="text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors disabled:opacity-50"
             >
-              {workspaceSaveStatus === 'saving' ? 'Saving Workspace...' : 'Save Workspace'}
+              {workspacePersistence.status === 'saving' ? 'Saving Workspace...' : 'Save Workspace'}
             </button>
           </div>
         </form>
-        {workspaceError && (
+        {workspacePersistence.error && (
           <div className="mt-3 bg-red-950/40 border border-red-500/30 p-2 text-[9px] font-mono text-red-400">
-            {workspaceError}
+            {workspacePersistence.error}
           </div>
         )}
       </div>

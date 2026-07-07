@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { ServerConfigCard } from './components/ServerConfigCard.tsx';
 import { ScenarioCard } from './components/ScenarioCard.tsx';
+import { BotProfileLibrary } from './components/BotProfileLibrary.tsx';
 import { ProvidersCard } from './components/ProvidersCard.tsx';
 import { LiveMonitor } from './components/LiveMonitor.tsx';
 import { WorldGridVisualizer } from './components/WorldGridVisualizer.tsx';
 import { RunHistory } from './components/RunHistory.tsx';
 import { SimulationState, Scenario, BotConfig, EventLog, LLMProviderConfig, LLMProviderType } from './types/index.ts';
+import { DEFAULT_SCENARIOS } from './data/scenarios.ts';
 import { ShieldCheck, Server, Play, History, Compass, Info, Cpu, Layers } from 'lucide-react';
 
 export default function App() {
@@ -30,6 +32,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'monitor' | 'map' | 'history'>('monitor');
   const [isLoading, setIsLoading] = useState(true);
   const [allowSimulationMode, setAllowSimulationMode] = useState(false);
+  const [scenarioMarkdown, setScenarioMarkdown] = useState(DEFAULT_SCENARIOS[0].markdown);
+  const [libraryReloadTrigger, setLibraryReloadTrigger] = useState(0);
 
   // Poll server state every 2 seconds to keep dashboard fully live
   const pollStatus = async () => {
@@ -231,6 +235,58 @@ export default function App() {
     await fetchProviders();
   };
 
+  const handleSaveBotToLibrary = async (bot: BotConfig) => {
+    try {
+      const newProfile = {
+        id: bot.name.toLowerCase().replace(/[^a-z0-9_-]/g, '') || `bot_${Math.random().toString(36).substr(2, 5)}`,
+        name: bot.name,
+        role: bot.role,
+        goal: bot.goal,
+        providerId: bot.providerId,
+        model: bot.model,
+        characterPrompt: `You are ${bot.name}, a ${bot.role}. Speak in character and focus on your goal: ${bot.goal}.`,
+        behaviorPrompt: `Actively pursue your goal: ${bot.goal}. Communicate with your teammates as needed.`,
+        inventory: bot.inventory,
+        lastSavedAt: new Date().toISOString(),
+      };
+      
+      const res = await fetch('/api/bot-profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProfile),
+      });
+      
+      if (res.ok) {
+        setLibraryReloadTrigger(prev => prev + 1);
+      } else {
+        const err = await res.json();
+        console.error(err.error || 'Failed to save bot profile.');
+      }
+    } catch (err) {
+      console.error('Error occurred while saving bot profile:', err);
+    }
+  };
+
+  const handleAppendBotToScenario = (p: any) => {
+    const invStr = Object.entries(p.inventory || {})
+      .map(([item, qty]) => `${item}: ${qty}`)
+      .join(', ');
+
+    const markdownBlock = `### Bot: ${p.name}
+- Role: ${p.role}
+- Goal: ${p.goal}
+- Provider: ${p.providerId}
+- Model: ${p.model}
+- Position: 0, 64, 0
+${invStr ? `- Inventory: ${invStr}` : ''}
+`;
+
+    setScenarioMarkdown((prev) => {
+      const cleanPrev = prev.trimEnd();
+      return `${cleanPrev}\n\n${markdownBlock}`;
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-brand-bg text-brand-text flex flex-col items-center justify-center font-mono text-xs gap-3">
@@ -320,6 +376,14 @@ export default function App() {
             serverStatus={state.serverStatus}
             activeScenario={state.activeScenario}
             onApplyWorldConfig={handleUpdateConfig}
+            markdown={scenarioMarkdown}
+            setMarkdown={setScenarioMarkdown}
+            onSaveBotToLibrary={handleSaveBotToLibrary}
+          />
+
+          <BotProfileLibrary
+            reloadTrigger={libraryReloadTrigger}
+            onAppendToScenario={handleAppendBotToScenario}
           />
 
           <ProvidersCard

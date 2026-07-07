@@ -9,6 +9,9 @@ interface ScenarioCardProps {
   serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
   activeScenario?: Scenario;
   onApplyWorldConfig?: (config: any) => Promise<void>;
+  markdown: string;
+  setMarkdown: React.Dispatch<React.SetStateAction<string>>;
+  onSaveBotToLibrary?: (bot: any) => Promise<void>;
 }
 
 export const ScenarioCard: React.FC<ScenarioCardProps> = ({
@@ -17,8 +20,10 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   serverStatus,
   activeScenario,
   onApplyWorldConfig,
+  markdown,
+  setMarkdown,
+  onSaveBotToLibrary,
 }) => {
-  const [markdown, setMarkdown] = useState(DEFAULT_SCENARIOS[0].markdown);
   const [parsedScenario, setParsedScenario] = useState<Scenario | null>(activeScenario || null);
   const [error, setError] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
@@ -251,7 +256,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                         <th className="p-2 text-[9px] font-bold uppercase">Name</th>
                         <th className="p-2 text-[9px] font-bold uppercase">Role</th>
                         <th className="p-2 text-[9px] font-bold uppercase">Model</th>
-                        <th className="p-2 text-[9px] font-bold uppercase text-right">Spawn</th>
+                        <th className="p-2 text-[9px] font-bold uppercase text-right">Spawn / Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-brand-border/30">
@@ -260,8 +265,21 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                           <td className="p-2 font-bold text-brand-green">{bot.name}</td>
                           <td className="p-2 truncate max-w-[100px] text-brand-text">{bot.role}</td>
                           <td className="p-2 text-brand-muted">{bot.model}</td>
-                          <td className="p-2 text-right text-brand-muted text-[9px]">
-                            [{bot.x},{bot.y},{bot.z}]
+                          <td className="p-2 text-right">
+                            <div className="flex flex-col sm:flex-row items-end sm:items-center justify-end gap-1 sm:gap-2">
+                              {onSaveBotToLibrary && (
+                                <button
+                                  onClick={() => onSaveBotToLibrary(bot)}
+                                  className="text-[9px] text-brand-green hover:underline font-bold uppercase tracking-tight"
+                                  title="Save this agent config to your Bot Profile Library"
+                                >
+                                  Save Profile
+                                </button>
+                              )}
+                              <span className="text-brand-muted text-[9px]">
+                                [{bot.x},{bot.y},{bot.z}]
+                              </span>
+                            </div>
                           </td>
                         </tr>
                       ))}
