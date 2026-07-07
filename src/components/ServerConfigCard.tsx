@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { GameMode, Difficulty, MinecraftServerConfig } from '../types/index.js';
-import { Play, Square, Settings, Terminal, Radio } from 'lucide-react';
+import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle } from 'lucide-react';
 
 interface ServerConfigCardProps {
   serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
@@ -29,6 +29,38 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [port, setPort] = useState(config.port);
   const [command, setCommand] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isSmokeTesting, setIsSmokeTesting] = useState(false);
+  const [smokeTestResult, setSmokeTestResult] = useState<{ success: boolean; logs: string[] } | null>(null);
+
+  const handleRunSmokeTest = async () => {
+    setIsSmokeTesting(true);
+    setSmokeTestResult(null);
+    try {
+      const res = await fetch('/api/test/smoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          serverName,
+          levelName,
+          seed,
+          gameMode,
+          difficulty,
+          port,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSmokeTestResult(data);
+      } else {
+        const err = await res.json();
+        setSmokeTestResult({ success: false, logs: [err.error || 'Smoke test API failed.'] });
+      }
+    } catch (err: any) {
+      setSmokeTestResult({ success: false, logs: [err.message || 'Network error executing smoke test.'] });
+    } finally {
+      setIsSmokeTesting(false);
+    }
+  };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -203,6 +235,80 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </form>
         </div>
       )}
+
+      {/* Real-Boundary Smoke Test Section */}
+      <div className="mt-4 border-t border-brand-border pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5 text-[10px] text-brand-muted font-mono uppercase">
+            <Activity className="w-3.5 h-3.5 text-brand-green" />
+            <span>Diagnostic Smoke Test</span>
+          </div>
+          <span className="text-[9px] font-mono text-brand-muted border border-brand-border px-1 uppercase">Evidence: real-boundary-smoke</span>
+        </div>
+        
+        <p className="text-[10px] text-brand-muted mb-3 font-mono leading-relaxed">
+          Launches a lightweight TCP socket server on port {port} & connects a mock Mineflayer client to verify server lifecycle, socket bindings, and Minecraft packet handshaking.
+        </p>
+
+        <button
+          type="button"
+          disabled={isSmokeTesting || serverStatus !== 'stopped'}
+          onClick={handleRunSmokeTest}
+          className={`w-full py-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider border rounded-none flex items-center justify-center gap-2 transition-all ${
+            serverStatus !== 'stopped'
+              ? 'bg-brand-border text-brand-muted border-brand-border cursor-not-allowed opacity-40'
+              : 'bg-brand-border-light text-brand-text border-brand-border hover:bg-brand-border'
+          }`}
+        >
+          {isSmokeTesting ? (
+            <>
+              <div className="w-2.5 h-2.5 border-2 border-brand-green border-t-transparent rounded-full animate-spin"></div>
+              Executing Socket Handshake...
+            </>
+          ) : (
+            'Execute Real-Boundary Smoke Test'
+          )}
+        </button>
+
+        {serverStatus !== 'stopped' && (
+          <p className="text-[9px] text-yellow-500/80 font-mono mt-1 italic">
+            * Server must be STOPPED to bind diagnostic port {port} for testing.
+          </p>
+        )}
+
+        {smokeTestResult && (
+          <div className="mt-3 border border-brand-border bg-brand-card p-3">
+            <div className="flex items-center justify-between mb-2 pb-2 border-b border-brand-border">
+              <span className="text-[10px] font-mono uppercase font-bold text-brand-muted">Handshake Diagnostics</span>
+              <span className={`text-[10px] font-mono font-bold uppercase flex items-center gap-1 ${smokeTestResult.success ? 'text-brand-green' : 'text-red-500'}`}>
+                {smokeTestResult.success ? (
+                  <>
+                    <CheckCircle className="w-3.5 h-3.5 text-brand-green animate-pulse" /> Success
+                  </>
+                ) : (
+                  <>
+                    <AlertTriangle className="w-3.5 h-3.5 text-red-500 animate-bounce" /> Failed
+                  </>
+                )}
+              </span>
+            </div>
+            
+            <div className="max-h-40 overflow-y-auto font-mono text-[9px] text-brand-muted space-y-1 scrollbar-thin scrollbar-thumb-brand-border">
+              {smokeTestResult.logs.map((log, idx) => (
+                <div key={idx} className={`leading-relaxed border-l-2 pl-2 ${
+                  log.includes('SUCCESSFUL') || log.includes('Success') 
+                    ? 'border-brand-green text-brand-text font-bold' 
+                    : log.includes('Error') || log.includes('Failed')
+                    ? 'border-red-500 text-red-400'
+                    : 'border-brand-border'
+                }`}>
+                  {log}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

@@ -7,6 +7,7 @@ import { ScenarioService } from './src/services/ScenarioService.js';
 import { EventStoreService } from './src/services/EventStoreService.js';
 import { BotOrchestratorService } from './src/services/BotOrchestratorService.js';
 import { GameMode, Difficulty, EventType } from './src/types/index.js';
+import { SmokeTestService } from './src/services/SmokeTestService.js';
 
 // Resolve directory paths for ES Modules
 const __filename = fileURLToPath(import.meta.url);
@@ -115,6 +116,26 @@ async function startServer() {
     }
     serverService.executeCommand(command);
     res.json({ success: true });
+  });
+
+  /**
+   * Run real-boundary TCP Minecraft Server & Bot Connection Smoke Test
+   */
+  app.post('/api/test/smoke', async (req, res) => {
+    const { serverName, levelName, seed, gameMode, difficulty, port } = req.body;
+    try {
+      const result = await SmokeTestService.getInstance().runSmokeTest({
+        name: serverName || 'SMOKE-Server',
+        level: levelName || 'world',
+        seed: seed || '987654321',
+        mode: gameMode || 'survival',
+        difficulty: difficulty || 'normal',
+        port: port ? parseInt(port, 10) : 25565,
+      });
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   /**
