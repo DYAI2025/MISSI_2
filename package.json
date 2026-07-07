@@ -8,7 +8,13 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "missi:smoke:server": "tsx scripts/smoke-server.ts",
+    "missi:smoke:provider": "tsx scripts/smoke-provider.ts",
+    "missi:smoke:bot": "tsx scripts/smoke-bot.ts",
+    "missi:smoke:e2e": "tsx scripts/smoke-e2e.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -31,6 +37,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^6.2.3"
+    "vite": "^6.2.3",
+    "vitest": "^4.1.10"
   }
 }

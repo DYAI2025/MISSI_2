@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { GameMode, Difficulty, MinecraftServerConfig } from '../types/index.js';
-import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
 
 interface ServerConfigCardProps {
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
-  runtimeMode: 'java-blocked' | 'node-emulator';
+  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped';
   config: MinecraftServerConfig;
   onUpdateConfig: (config: Partial<MinecraftServerConfig>) => Promise<void>;
   onStartServer: (acceptEULA: boolean, useEmulator: boolean) => Promise<void>;
   onStopServer: () => Promise<void>;
   onSendCommand: (command: string) => Promise<void>;
+  allowSimulationMode: boolean;
 }
 
 export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
@@ -20,6 +21,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   onStartServer,
   onStopServer,
   onSendCommand,
+  allowSimulationMode,
 }) => {
   const [serverName, setServerName] = useState(config.serverName);
   const [seed, setSeed] = useState(config.seed);
@@ -45,11 +47,11 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
     }
   };
 
-  const handleRunSmokeTest = async () => {
+  const handleRunDiagnostic = async () => {
     setIsSmokeTesting(true);
     setSmokeTestResult(null);
     try {
-      const res = await fetch('/api/test/smoke', {
+      const res = await fetch('/api/test/protocol-mock-diagnostic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -66,10 +68,10 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         setSmokeTestResult(data);
       } else {
         const err = await res.json();
-        setSmokeTestResult({ success: false, logs: [err.error || 'Smoke test API failed.'] });
+        setSmokeTestResult({ success: false, logs: [err.error || 'Diagnostic API failed.'] });
       }
     } catch (err: any) {
-      setSmokeTestResult({ success: false, logs: [err.message || 'Network error executing smoke test.'] });
+      setSmokeTestResult({ success: false, logs: [err.message || 'Network error executing diagnostic test.'] });
     } finally {
       setIsSmokeTesting(false);
     }
@@ -101,19 +103,34 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       case 'running': return 'bg-brand-green/10 text-brand-green border-brand-green/40';
       case 'starting': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30 animate-pulse';
       case 'stopping': return 'bg-red-500/10 text-red-400 border-red-500/30';
+      case 'blocked': return 'bg-orange-500/10 text-orange-400 border-orange-500/30';
+      case 'failed': return 'bg-red-500/15 text-red-500 border-red-500/40';
       default: return 'bg-brand-border text-brand-muted border-brand-border';
     }
   };
 
   return (
     <div id="server-config-card" className="bg-brand-aside border border-brand-border rounded-none p-4 shadow-none">
+      {runtimeMode === 'simulation' && (
+        <div className="mb-4 bg-orange-950/40 border border-orange-500/30 p-2.5 rounded-none text-[10px] font-mono text-orange-400 font-bold uppercase tracking-wide flex items-center gap-1.5 animate-pulse">
+          <AlertCircle className="w-4 h-4 text-orange-500 shrink-0" />
+          Simulation Mode — Not Live Ready
+        </div>
+      )}
+
       <div className="flex items-center justify-between border-b border-brand-border pb-3 mb-4">
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-brand-green" />
           <h2 className="text-[10px] font-mono uppercase tracking-widest text-brand-muted font-bold">System Config // MC_SERVER</h2>
         </div>
         <div className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded-none border ${getStatusStyle()} flex items-center gap-1.5`}>
-          <span className={`w-1 h-1 rounded-full ${serverStatus === 'running' ? 'bg-brand-green' : serverStatus === 'starting' ? 'bg-yellow-400' : 'bg-brand-muted'}`} />
+          <span className={`w-1.5 h-1.5 rounded-full ${
+            serverStatus === 'running' ? 'bg-brand-green' : 
+            serverStatus === 'starting' ? 'bg-yellow-400' : 
+            serverStatus === 'blocked' ? 'bg-orange-400' :
+            serverStatus === 'failed' ? 'bg-red-500' :
+            'bg-brand-muted'
+          }`} />
           {serverStatus.toUpperCase()}
         </div>
       </div>
@@ -216,17 +233,23 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
             </span>
           </label>
 
-          <label className="flex items-start gap-2.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
-              checked={useEmulator}
-              onChange={(e) => setUseEmulator(e.target.checked)}
-            />
-            <span className="text-[10px] font-mono text-brand-text leading-tight">
-              Use Sandbox Emulator. Bypasses Java/server.jar check & runs local simulation.
-            </span>
-          </label>
+          {allowSimulationMode ? (
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
+                checked={useEmulator}
+                onChange={(e) => setUseEmulator(e.target.checked)}
+              />
+              <span className="text-[10px] font-mono text-brand-text leading-tight text-orange-400">
+                Use Sandbox Emulator. Bypasses Java/server.jar check & runs local simulation (Simulation Mode — Not Live Ready).
+              </span>
+            </label>
+          ) : (
+            <div className="text-[9px] font-mono text-brand-muted italic uppercase border border-brand-border bg-brand-card p-2">
+              * Sandbox Emulator is locked (Requires <strong className="text-orange-400">ALLOW_SIMULATION_MODE=true</strong> in environment)
+            </div>
+          )}
         </div>
       )}
 
@@ -288,14 +311,14 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         </div>
       )}
 
-      {/* Real-Boundary Smoke Test Section */}
+      {/* Protocol Mock Diagnostic Section */}
       <div className="mt-4 border-t border-brand-border pt-4">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-1.5 text-[10px] text-brand-muted font-mono uppercase">
             <Activity className="w-3.5 h-3.5 text-brand-green" />
-            <span>Diagnostic Smoke Test</span>
+            <span>Protocol Mock Diagnostic</span>
           </div>
-          <span className="text-[9px] font-mono text-brand-muted border border-brand-border px-1 uppercase">Evidence: real-boundary-smoke</span>
+          <span className="text-[9px] font-mono text-brand-muted border border-brand-border px-1 uppercase">Evidence: protocol-mock</span>
         </div>
         
         <p className="text-[10px] text-brand-muted mb-3 font-mono leading-relaxed">
@@ -305,7 +328,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         <button
           type="button"
           disabled={isSmokeTesting || serverStatus !== 'stopped'}
-          onClick={handleRunSmokeTest}
+          onClick={handleRunDiagnostic}
           className={`w-full py-1.5 px-3 font-mono text-[10px] font-bold uppercase tracking-wider border rounded-none flex items-center justify-center gap-2 transition-all ${
             serverStatus !== 'stopped'
               ? 'bg-brand-border text-brand-muted border-brand-border cursor-not-allowed opacity-40'
@@ -315,10 +338,10 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           {isSmokeTesting ? (
             <>
               <div className="w-2.5 h-2.5 border-2 border-brand-green border-t-transparent rounded-full animate-spin"></div>
-              Executing Socket Handshake...
+              Executing Diagnostic Handshake...
             </>
           ) : (
-            'Execute Real-Boundary Smoke Test'
+            'Execute Protocol Mock Diagnostic'
           )}
         </button>
 

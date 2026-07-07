@@ -6,8 +6,8 @@ import { MinecraftServerConfig, GameMode, Difficulty, WorldBlock } from '../type
 export class MinecraftServerService {
   private static instance: MinecraftServerService | null = null;
   private serverProcess: ChildProcess | null = null;
-  private status: 'stopped' | 'starting' | 'running' | 'stopping' = 'stopped';
-  private runtimeMode: 'java-blocked' | 'node-emulator' = 'node-emulator';
+  private status: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed' = 'stopped';
+  private runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped' = 'stopped';
   private config: MinecraftServerConfig = {
     serverName: 'MISSI-Server',
     levelName: 'world',
@@ -127,7 +127,7 @@ export class MinecraftServerService {
    * Attempts to launch a real Minecraft server or falls back to simulated mode
    */
   public async startServer(acceptEULA: boolean = false, useEmulator: boolean = false): Promise<void> {
-    if (this.status !== 'stopped') {
+    if (this.status !== 'stopped' && this.status !== 'blocked' && this.status !== 'failed') {
       throw new Error('Server is already running or in transition.');
     }
 
@@ -138,13 +138,19 @@ export class MinecraftServerService {
 
     const envEula = process.env.MISSI_ACCEPT_MINECRAFT_EULA === 'true';
     if (!acceptEULA && !envEula && !useEmulator) {
-      this.status = 'stopped';
+      this.status = 'blocked';
+      this.runtimeMode = 'blocked';
       throw new Error('EULA_NOT_ACCEPTED: You must explicitly read and accept the Minecraft End User License Agreement (EULA) before starting a Minecraft Java server. Please tick the acceptance checkbox.');
     }
 
     if (useEmulator) {
-      this.runtimeMode = 'node-emulator';
-      this.addLog('Cognitive Mode: Launching High-Fidelity Node-based Minecraft Simulation Emulator.');
+      if (process.env.ALLOW_SIMULATION_MODE !== 'true') {
+        this.status = 'blocked';
+        this.runtimeMode = 'blocked';
+        throw new Error('SIMULATION_MODE_DISABLED: Simulation mode is disabled. To enable, set ALLOW_SIMULATION_MODE=true in your environment.');
+      }
+      this.runtimeMode = 'simulation';
+      this.addLog('Simulation Mode — Not Live Ready: Launching High-Fidelity Node-based Minecraft Simulation Emulator.');
       
       // Simulating loading chunks and terrain gen
       setTimeout(() => {
@@ -172,14 +178,15 @@ export class MinecraftServerService {
     }
 
     if (!javaAvailable) {
-      this.status = 'stopped';
+      this.status = 'blocked';
+      this.runtimeMode = 'blocked';
       this.addLog('[Console Error] BLOCKED: Java binary "java" not found in sandbox environment.');
       this.addLog('[Console Guidance] To verify this outside AI Studio, install Java 17+ and execute:');
       this.addLog('  MISSI_ACCEPT_MINECRAFT_EULA=true PORT=3000 npm run dev');
-      throw new Error('JAVA_NOT_FOUND: Java binary not found. Real Minecraft Java server execution is blocked. Please select the "Use Sandbox Emulator" option to proceed inside the sandbox environment.');
+      throw new Error('JAVA_NOT_FOUND: Java binary not found. Real Minecraft Java server execution is blocked. Please select the "Use Sandbox Emulator" option to proceed inside the sandbox environment (guarded by ALLOW_SIMULATION_MODE=true).');
     }
 
-    this.runtimeMode = 'java-blocked';
+    this.runtimeMode = 'live';
     this.addLog('Java runtime detected. Setting up real server directories and server.properties...');
     await this.prepareRealServerFiles(acceptEULA || envEula);
     await this.launchRealJavaServer();
@@ -230,6 +237,7 @@ export class MinecraftServerService {
             this.addLog(line.trim());
             if (line.includes('Done (')) {
               this.status = 'running';
+              this.runtimeMode = 'live';
             }
           }
         });
@@ -241,11 +249,18 @@ export class MinecraftServerService {
 
       this.serverProcess.on('close', (code) => {
         this.addLog(`Server process exited with code ${code}`);
-        this.status = 'stopped';
+        if (code !== 0 && code !== null) {
+          this.status = 'failed';
+          this.runtimeMode = 'failed';
+        } else {
+          this.status = 'stopped';
+          this.runtimeMode = 'stopped';
+        }
         this.serverProcess = null;
       });
     } catch {
-      this.status = 'stopped';
+      this.status = 'blocked';
+      this.runtimeMode = 'blocked';
       this.addLog('[Console Error] BLOCKED: "server.jar" not found in minecraft-server/ directory.');
       this.addLog('[Console Guidance] Please download a valid Minecraft server.jar or check "Use Sandbox Emulator" in the server config panel.');
       this.addLog('  To download: wget https://piston-data.mojang.com/v1/objects/84194a5c4d6da61663047990dec7177b3c2e4070/server.jar -O minecraft-server/server.jar');
@@ -261,13 +276,14 @@ export class MinecraftServerService {
     this.status = 'stopping';
     this.addLog('Stopping server cleanly...');
 
-    if (this.runtimeMode === 'java-blocked' && this.serverProcess) {
+    if (this.runtimeMode === 'live' && this.serverProcess) {
       this.serverProcess.stdin?.write('stop\n');
       setTimeout(() => {
         if (this.serverProcess) {
           this.serverProcess.kill('SIGKILL');
           this.serverProcess = null;
           this.status = 'stopped';
+          this.runtimeMode = 'stopped';
         }
       }, 5000);
     } else {
@@ -277,6 +293,7 @@ export class MinecraftServerService {
         this.addLog('Saving worlds');
         this.addLog('Closing Server TCP Sockets');
         this.status = 'stopped';
+        this.runtimeMode = 'stopped';
         this.addLog('Server stopped cleanly.');
       }, 500);
     }

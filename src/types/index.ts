@@ -109,8 +109,8 @@ export interface WorldBlock {
 }
 
 export interface SimulationState {
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
-  runtimeMode: 'java-blocked' | 'node-emulator';
+  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped';
   serverConfig: MinecraftServerConfig;
   bots: BotConfig[];
   logs: EventLog[];

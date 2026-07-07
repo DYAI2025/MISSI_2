@@ -29,6 +29,7 @@ export default function App() {
   const [providers, setProviders] = useState<(LLMProviderConfig & { isConfigured: boolean })[]>([]);
   const [activeTab, setActiveTab] = useState<'monitor' | 'map' | 'history'>('monitor');
   const [isLoading, setIsLoading] = useState(true);
+  const [allowSimulationMode, setAllowSimulationMode] = useState(false);
 
   // Poll server state every 2 seconds to keep dashboard fully live
   const pollStatus = async () => {
@@ -53,6 +54,7 @@ export default function App() {
         logs: logsData.logs || [],
         activeScenario: data.activeScenario,
       }));
+      setAllowSimulationMode(!!data.allowSimulationMode);
     } catch (err) {
       console.warn('Polling error:', err);
     }
@@ -305,6 +307,7 @@ export default function App() {
             onStartServer={handleStartServer}
             onStopServer={handleStopServer}
             onSendCommand={handleSendCommand}
+            allowSimulationMode={allowSimulationMode}
           />
 
           <ScenarioCard
@@ -343,7 +346,7 @@ export default function App() {
                   : 'text-brand-muted hover:text-brand-text'
               }`}
             >
-              <Compass className="w-3.5 h-3.5" /> 02 // Spatial Map
+              <Compass className="w-3.5 h-3.5" /> 02 // Synthetic Preview
             </button>
             <button
               onClick={() => setActiveTab('history')}
@@ -391,9 +394,9 @@ export default function App() {
 
       {/* Footer System Metrics Bar */}
       <footer className="h-10 border-t border-brand-border bg-brand-panel px-6 flex items-center justify-between text-[10px] font-mono text-brand-muted tracking-wider mt-auto shrink-0">
-        <div>CORE: Mindcraft-Develop v3.1 | MINEFLAYER: 4.15.0</div>
+        <div>CORE: Minecraft Scenario Simulator | MINEFLAYER: RUNTIME-INTEGRATED</div>
         <div className="hidden sm:block">COORDINATION: team_bulletin_shared_context</div>
-        <div>BUILD: 2026.FINAL_RELEASE</div>
+        <div>BUILD: DEV_PREVIEW</div>
       </footer>
     </div>
   );

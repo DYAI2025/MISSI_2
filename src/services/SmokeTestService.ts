@@ -23,13 +23,13 @@ export class SmokeTestService {
   }
 
   /**
-   * Runs a real-boundary TCP smoke test.
+   * Runs a TCP protocol handshake mock diagnostic.
    * Spawns a real TCP server, binds it to the configured port, connects a socket client representing a Mineflayer bot,
    * performs a binary protocol handshake sequence, logs execution events, and gracefully closes the connection.
    */
   public async runSmokeTest(config: SmokeTestConfig): Promise<{ success: boolean; logs: string[] }> {
     if (this.isTesting) {
-      throw new Error('A smoke test is already actively executing.');
+      throw new Error('A diagnostic run is already actively executing.');
     }
 
     this.isTesting = true;
@@ -37,7 +37,7 @@ export class SmokeTestService {
     const eventStore = EventStoreService.getInstance();
 
     const addLog = (msg: string, isError: boolean = false) => {
-      const logLine = `[SMOKE-TEST] ${msg}`;
+      const logLine = `[DIAGNOSTIC] ${msg}`;
       testLogs.push(logLine);
       eventStore.addEvent(
         isError ? EventType.ERROR : EventType.SYSTEM,
@@ -46,7 +46,7 @@ export class SmokeTestService {
       console.log(logLine);
     };
 
-    addLog(`--- STARTING REAL-BOUNDARY SMOKE TEST ---`);
+    addLog(`--- STARTING PROTOCOL MOCK DIAGNOSTIC TEST ---`);
     addLog(`Target Configuration:`);
     addLog(`  - Name: ${config.name}`);
     addLog(`  - Level: ${config.level}`);
@@ -155,7 +155,7 @@ export class SmokeTestService {
               addLog(`[Bot Socket Client] Handshake completed successfully! 'Login Success' parsed.`);
               addLog(`[Bot Socket Client] Bot entity joined server level successfully. Connected and ready.`);
               
-              addLog(`--- SMOKE TEST SUCCESSFUL! REAL-BOUNDARY EVIDENCE ACQUIRED ---`);
+              addLog(`--- PROTOCOL MOCK DIAGNOSTIC SUCCESSFUL ---`);
               cleanup();
               resolve({ success: true, logs: testLogs });
             }

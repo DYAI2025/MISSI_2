@@ -54,6 +54,8 @@ async function startServer() {
       activeScenario: simStatus.activeScenario,
       bots,
       worldGridSize: worldGrid.length,
+      allowSimulationMode: process.env.ALLOW_SIMULATION_MODE === 'true',
+      not_live_ready: serverStatus.runtimeMode === 'simulation' || process.env.ALLOW_SIMULATION_MODE !== 'true',
     });
   });
 
@@ -151,9 +153,9 @@ async function startServer() {
   });
 
   /**
-   * Run real-boundary TCP Minecraft Server & Bot Connection Smoke Test
+   * Run TCP Minecraft Server & Bot Connection Protocol Mock Diagnostic Test
    */
-  app.post('/api/test/smoke', async (req, res) => {
+  app.post('/api/test/protocol-mock-diagnostic', async (req, res) => {
     const { serverName, levelName, seed, gameMode, difficulty, port } = req.body;
     try {
       const result = await SmokeTestService.getInstance().runSmokeTest({
