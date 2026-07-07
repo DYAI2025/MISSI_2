@@ -88,16 +88,20 @@ export default function App() {
 
   const handleUpdateConfig = async (newConfig: Partial<any>) => {
     try {
-      const res = await fetch('/api/server/config', {
-        method: 'POST',
+      const res = await fetch('/api/settings/server', {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newConfig),
       });
       if (res.ok) {
         await pollStatus();
+      } else {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to update server settings.');
       }
     } catch (err) {
       console.error('Failed to save server config:', err);
+      throw err;
     }
   };
 

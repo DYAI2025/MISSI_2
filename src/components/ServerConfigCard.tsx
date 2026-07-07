@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GameMode, Difficulty, MinecraftServerConfig } from '../types/index.js';
-import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle } from 'lucide-react';
+import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle, Layers } from 'lucide-react';
 
 interface ServerConfigCardProps {
   serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
@@ -37,6 +37,83 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [acceptEULA, setAcceptEULA] = useState(false);
   const [useEmulator, setUseEmulator] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+
+  // Server Save-State indicators
+  const [serverSaveStatus, setServerSaveStatus] = useState<'saved' | 'unsaved' | 'saving' | 'failed'>('saved');
+  const [serverLastSavedAt, setServerLastSavedAt] = useState<string | null>(null);
+  const [serverError, setServerError] = useState<string | null>(null);
+
+  // Workspace Preference States
+  const [defaultProviderId, setDefaultProviderId] = useState('gemini');
+  const [intervalMs, setIntervalMs] = useState(8000);
+  const [workspaceSaveStatus, setWorkspaceSaveStatus] = useState<'saved' | 'unsaved' | 'saving' | 'failed'>('saved');
+  const [workspaceLastSavedAt, setWorkspaceLastSavedAt] = useState<string | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [savedWorkspaceConfig, setSavedWorkspaceConfig] = useState<{ defaultProviderId?: string; intervalMs?: number }>({
+    defaultProviderId: 'gemini',
+    intervalMs: 8000,
+  });
+
+  // Check if current form values are different from saved server properties
+  const hasUnsavedServerChanges = 
+    serverName !== config.serverName ||
+    seed !== config.seed ||
+    levelName !== config.levelName ||
+    gameMode !== config.gameMode ||
+    difficulty !== config.difficulty ||
+    port !== config.port;
+
+  // Check if current form values are different from saved workspace properties
+  const hasUnsavedWorkspaceChanges =
+    defaultProviderId !== savedWorkspaceConfig.defaultProviderId ||
+    intervalMs !== savedWorkspaceConfig.intervalMs;
+
+  // State manager for tracking dirty fields reactively
+  const [dirtyFields, setDirtyFields] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setDirtyFields({
+      serverName: serverName !== config.serverName,
+      seed: seed !== config.seed,
+      levelName: levelName !== config.levelName,
+      gameMode: gameMode !== config.gameMode,
+      difficulty: difficulty !== config.difficulty,
+      port: Number(port) !== config.port,
+      defaultProviderId: defaultProviderId !== savedWorkspaceConfig.defaultProviderId,
+      intervalMs: Number(intervalMs) !== savedWorkspaceConfig.intervalMs,
+    });
+  }, [
+    serverName, seed, levelName, gameMode, difficulty, port, config,
+    defaultProviderId, intervalMs, savedWorkspaceConfig
+  ]);
+
+  // Load workspace preferences on mount
+  useEffect(() => {
+    let active = true;
+    const fetchWorkspace = async () => {
+      try {
+        const res = await fetch('/api/settings/workspace');
+        if (res.ok && active) {
+          const data = await res.json();
+          if (data && data.config) {
+            setDefaultProviderId(data.config.defaultProviderId || 'gemini');
+            setIntervalMs(data.config.intervalMs || 8000);
+            setSavedWorkspaceConfig({
+              defaultProviderId: data.config.defaultProviderId || 'gemini',
+              intervalMs: data.config.intervalMs || 8000,
+            });
+            setWorkspaceLastSavedAt(new Date().toISOString());
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load workspace preferences:', err);
+      }
+    };
+    fetchWorkspace();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleStart = async () => {
     setStartError(null);
@@ -79,16 +156,56 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setServerError(null);
+    setServerSaveStatus('saving');
     setIsSaving(true);
-    await onUpdateConfig({
-      serverName,
-      seed,
-      levelName,
-      gameMode,
-      difficulty,
-      port: Number(port),
-    });
-    setIsSaving(false);
+    try {
+      await onUpdateConfig({
+        serverName,
+        seed,
+        levelName,
+        gameMode,
+        difficulty,
+        port: Number(port),
+      });
+      setServerSaveStatus('saved');
+      setServerLastSavedAt(new Date().toISOString());
+    } catch (err: any) {
+      setServerError(err.message || 'Failed to save server config.');
+      setServerSaveStatus('failed');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveWorkspace = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setWorkspaceError(null);
+    setWorkspaceSaveStatus('saving');
+    try {
+      const res = await fetch('/api/settings/workspace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          defaultProviderId,
+          intervalMs,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to save workspace settings.');
+      }
+      const data = await res.json();
+      setSavedWorkspaceConfig({
+        defaultProviderId: data.config.defaultProviderId,
+        intervalMs: data.config.intervalMs,
+      });
+      setWorkspaceSaveStatus('saved');
+      setWorkspaceLastSavedAt(new Date().toISOString());
+    } catch (err: any) {
+      setWorkspaceError(err.message || 'Failed to save workspace preferences.');
+      setWorkspaceSaveStatus('failed');
+    }
   };
 
   const handleCommandSubmit = (e: React.FormEvent) => {
@@ -118,26 +235,58 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         </div>
       )}
 
-      <div className="flex items-center justify-between border-b border-brand-border pb-3 mb-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-brand-border pb-3 mb-4 gap-2">
         <div className="flex items-center gap-2">
           <Settings className="w-4 h-4 text-brand-green" />
           <h2 className="text-[10px] font-mono uppercase tracking-widest text-brand-muted font-bold">System Config // MC_SERVER</h2>
         </div>
-        <div className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded-none border ${getStatusStyle()} flex items-center gap-1.5`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${
-            serverStatus === 'running' ? 'bg-brand-green' : 
-            serverStatus === 'starting' ? 'bg-yellow-400' : 
-            serverStatus === 'blocked' ? 'bg-orange-400' :
-            serverStatus === 'failed' ? 'bg-red-500' :
-            'bg-brand-muted'
-          }`} />
-          {serverStatus.toUpperCase()}
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+          {/* Server Config Save-State Indicators */}
+          {serverSaveStatus === 'saving' && (
+            <span className="text-[9px] font-mono text-yellow-500 uppercase animate-pulse">Saving...</span>
+          )}
+          {serverSaveStatus === 'failed' && (
+            <span className="text-[9px] font-mono text-red-500 uppercase font-bold">Save Failed</span>
+          )}
+          {serverSaveStatus === 'saved' && !hasUnsavedServerChanges && (
+            <span className="text-[9px] font-mono text-brand-green uppercase font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-green" />
+              Saved
+            </span>
+          )}
+          {hasUnsavedServerChanges && serverSaveStatus !== 'saving' && (
+            <span className="text-[9px] font-mono text-yellow-500 uppercase font-bold flex items-center gap-1 animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+              Unsaved
+            </span>
+          )}
+          {serverLastSavedAt && (
+            <span className="text-[8px] font-mono text-brand-muted opacity-65">
+              Last: {new Date(serverLastSavedAt).toLocaleTimeString()}
+            </span>
+          )}
+          <div className="h-3 w-px bg-brand-border mx-1" />
+          <div className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded-none border ${getStatusStyle()} flex items-center gap-1.5`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              serverStatus === 'running' ? 'bg-brand-green' : 
+              serverStatus === 'starting' ? 'bg-yellow-400' : 
+              serverStatus === 'blocked' ? 'bg-orange-400' :
+              serverStatus === 'failed' ? 'bg-red-500' :
+              'bg-brand-muted'
+            }`} />
+            {serverStatus.toUpperCase()}
+          </div>
         </div>
       </div>
 
       <form onSubmit={handleSave} className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Server Name</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>Server Name</span>
+            {dirtyFields['serverName'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <input
             type="text"
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
@@ -147,7 +296,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           />
         </div>
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">World Seed</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>World Seed</span>
+            {dirtyFields['seed'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <input
             type="text"
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
@@ -157,7 +311,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           />
         </div>
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Level Name</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>Level Name</span>
+            {dirtyFields['levelName'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <input
             type="text"
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
@@ -167,7 +326,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           />
         </div>
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Server Port</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>Server Port</span>
+            {dirtyFields['port'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <input
             type="number"
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
@@ -177,7 +341,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           />
         </div>
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Game Mode</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>Game Mode</span>
+            {dirtyFields['gameMode'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <select
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
             value={gameMode}
@@ -191,7 +360,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </select>
         </div>
         <div>
-          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Difficulty</label>
+          <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+            <span>Difficulty</span>
+            {dirtyFields['difficulty'] && (
+              <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+            )}
+          </label>
           <select
             className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors disabled:opacity-40"
             value={difficulty}
@@ -217,6 +391,98 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </div>
         )}
       </form>
+
+      {/* Workspace Preferences Section */}
+      <div id="workspace-preferences-section" className="mt-6 border-t border-brand-border pt-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Layers className="w-4 h-4 text-brand-green" />
+            <h3 className="text-[10px] font-mono uppercase tracking-widest text-brand-muted font-bold">Workspace Preferences</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Status indicator */}
+            {workspaceSaveStatus === 'saving' && (
+              <span className="text-[9px] font-mono text-yellow-500 uppercase animate-pulse">Saving...</span>
+            )}
+            {workspaceSaveStatus === 'failed' && (
+              <span className="text-[9px] font-mono text-red-500 uppercase font-bold">Save Failed</span>
+            )}
+            {workspaceSaveStatus === 'saved' && !hasUnsavedWorkspaceChanges && (
+              <span className="text-[9px] font-mono text-brand-green uppercase font-bold flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-green" />
+                Saved
+              </span>
+            )}
+            {hasUnsavedWorkspaceChanges && workspaceSaveStatus !== 'saving' && (
+              <span className="text-[9px] font-mono text-yellow-500 uppercase font-bold flex items-center gap-1 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500" />
+                Unsaved
+              </span>
+            )}
+            {workspaceLastSavedAt && (
+              <span className="text-[8px] font-mono text-brand-muted opacity-65">
+                Last: {new Date(workspaceLastSavedAt).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <form onSubmit={handleSaveWorkspace} className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+              <span>Default AI Provider</span>
+              {dirtyFields['defaultProviderId'] && (
+                <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+              )}
+            </label>
+            <select
+              className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+              value={defaultProviderId}
+              onChange={(e) => setDefaultProviderId(e.target.value)}
+            >
+              <option value="gemini">Google Gemini</option>
+              <option value="openai">OpenAI GPT</option>
+              <option value="anthropic">Anthropic Claude</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="ollama">Ollama (Local)</option>
+              <option value="lmstudio">LM Studio (Local)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono flex items-center justify-between">
+              <span>Step Loop Interval (ms)</span>
+              {dirtyFields['intervalMs'] && (
+                <span className="text-[8px] text-yellow-500 font-bold uppercase tracking-wider animate-pulse">● Unsaved</span>
+              )}
+            </label>
+            <input
+              type="number"
+              min={1000}
+              max={60000}
+              className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+              value={intervalMs}
+              onChange={(e) => setIntervalMs(Number(e.target.value))}
+            />
+          </div>
+          <div className="md:col-span-2 flex justify-between items-center mt-1">
+            <span className="text-[9px] font-mono text-brand-muted italic">
+              * Controls prompt loop delays & default active providers.
+            </span>
+            <button
+              type="submit"
+              disabled={workspaceSaveStatus === 'saving'}
+              className="text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors disabled:opacity-50"
+            >
+              {workspaceSaveStatus === 'saving' ? 'Saving Workspace...' : 'Save Workspace'}
+            </button>
+          </div>
+        </form>
+        {workspaceError && (
+          <div className="mt-3 bg-red-950/40 border border-red-500/30 p-2 text-[9px] font-mono text-red-400">
+            {workspaceError}
+          </div>
+        )}
+      </div>
 
       {/* EULA Acceptance & Sandbox Emulator */}
       {serverStatus === 'stopped' && (

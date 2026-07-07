@@ -10,6 +10,11 @@ import { GameMode, Difficulty, EventType } from './src/types/index.js';
 import { SmokeTestService } from './src/services/SmokeTestService.js';
 import { LLMProviderService } from './src/services/LLMProviderService.js';
 
+import { SecretStoreService } from './src/services/SecretStoreService.js';
+import { SettingsService } from './src/services/SettingsService.js';
+import { ScenarioLibraryService } from './src/services/ScenarioLibraryService.js';
+import { BotProfileService } from './src/services/BotProfileService.js';
+
 // Resolve directory paths for both ES Modules and CommonJS bundles
 let currentDirname = '';
 try {
@@ -25,7 +30,19 @@ async function startServer() {
   // Standard Middlewares
   app.use(express.json());
 
+  // Initialize persistent services
+  const secrets = SecretStoreService.getInstance();
+  await secrets.init();
+  const settings = SettingsService.getInstance();
+  await settings.init();
+  const scenarioLibrary = ScenarioLibraryService.getInstance();
+  await scenarioLibrary.init();
+  const botProfileService = BotProfileService.getInstance();
+  await botProfileService.init();
+
   const serverService = MinecraftServerService.getInstance();
+  serverService.loadConfig();
+
   const eventStore = EventStoreService.getInstance();
   const orchestrator = BotOrchestratorService.getInstance();
 
@@ -265,13 +282,13 @@ async function startServer() {
    * Get LLM provider definitions (safely concealing secrets)
    */
   app.get('/api/providers', (req, res) => {
-    const list = orchestrator.getProviders().map(p => ({
+    const list = settings.getProviders().map(p => ({
       id: p.id,
       type: p.type,
       name: p.name,
       customUrl: p.customUrl,
       defaultModel: p.defaultModel,
-      isConfigured: !!(p.apiKey || (p.type === 'gemini' && process.env.GEMINI_API_KEY)),
+      isConfigured: !!(p.apiKey && p.apiKey.length > 0),
     }));
     res.json({ providers: list });
   });
@@ -279,13 +296,13 @@ async function startServer() {
   /**
    * Update credentials for standard provider
    */
-  app.post('/api/provider/update', (req, res) => {
+  app.post('/api/provider/update', async (req, res) => {
     const { id, type, apiKey, customUrl, defaultModel } = req.body;
     if (!id || !type) {
       return res.status(400).json({ error: 'Provider ID and Type are required.' });
     }
     try {
-      orchestrator.updateProvider({
+      const saved = await settings.saveProvider({
         id,
         type,
         name: id === 'gemini' ? 'Google Gemini' : id === 'openai' ? 'OpenAI GPT' : id === 'anthropic' ? 'Anthropic Claude' : id === 'openrouter' ? 'OpenRouter' : id === 'ollama' ? 'Ollama' : 'LM Studio',
@@ -293,9 +310,222 @@ async function startServer() {
         customUrl: customUrl || undefined,
         defaultModel: defaultModel || '',
       });
+      orchestrator.updateProvider(saved);
       res.json({ success: true });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Update provider config (PUT route)
+   */
+  app.put('/api/providers/:id', async (req, res) => {
+    try {
+      const saved = await settings.saveProvider({
+        ...req.body,
+        id: req.params.id,
+      });
+      orchestrator.updateProvider(saved);
+      res.json({
+        success: true,
+        provider: {
+          id: saved.id,
+          type: saved.type,
+          name: saved.name,
+          customUrl: saved.customUrl,
+          defaultModel: saved.defaultModel,
+          isConfigured: !!(saved.apiKey && saved.apiKey.length > 0),
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Delete provider secret
+   */
+  app.delete('/api/providers/:id/secret', async (req, res) => {
+    try {
+      await settings.deleteProviderSecret(req.params.id);
+      const updated = settings.getProviders().find(p => p.id === req.params.id);
+      if (updated) {
+        orchestrator.updateProvider(updated);
+      }
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Server config GET/PUT
+   */
+  app.get('/api/settings/server', (req, res) => {
+    res.json({ success: true, config: settings.getServerConfig() });
+  });
+
+  app.put('/api/settings/server', async (req, res) => {
+    try {
+      const updated = await settings.saveServerConfig(req.body);
+      serverService.updateConfig(updated);
+      res.json({ success: true, config: updated });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Workspace config GET/PUT
+   */
+  app.get('/api/settings/workspace', (req, res) => {
+    res.json({ success: true, config: settings.getWorkspaceConfig() });
+  });
+
+  app.put('/api/settings/workspace', async (req, res) => {
+    try {
+      const updated = await settings.saveWorkspaceConfig(req.body);
+      res.json({ success: true, config: updated });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Scenarios Library CRUD
+   */
+  app.get('/api/scenarios', (req, res) => {
+    res.json({ scenarios: scenarioLibrary.getScenarios() });
+  });
+
+  app.post('/api/scenarios', async (req, res) => {
+    const { id, title, description, markdown, parsedScenario } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: 'Scenario ID is required.' });
+    }
+    try {
+      let finalParsed = parsedScenario;
+      if (!finalParsed && markdown) {
+        finalParsed = ScenarioService.parseMarkdown(markdown);
+        ScenarioService.validate(finalParsed);
+      }
+      if (!finalParsed) {
+        return res.status(400).json({ error: 'Scenario parsed configuration or markdown is required.' });
+      }
+      const item = {
+        id,
+        title: title || finalParsed.title,
+        description: description || finalParsed.description || '',
+        originalMarkdown: markdown || '',
+        parsedScenario: finalParsed,
+        lastSavedAt: new Date().toISOString(),
+      };
+      const saved = await scenarioLibrary.saveScenarioItem(item);
+      res.json({ success: true, scenario: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/scenarios/:id', (req, res) => {
+    const sc = scenarioLibrary.getScenario(req.params.id);
+    if (!sc) {
+      return res.status(404).json({ error: 'Scenario not found.' });
+    }
+    res.json({ scenario: sc });
+  });
+
+  app.put('/api/scenarios/:id', async (req, res) => {
+    const { title, description, markdown, parsedScenario } = req.body;
+    try {
+      let finalParsed = parsedScenario;
+      if (!finalParsed && markdown) {
+        finalParsed = ScenarioService.parseMarkdown(markdown);
+        ScenarioService.validate(finalParsed);
+      }
+      const existing = scenarioLibrary.getScenario(req.params.id);
+      if (!existing && !finalParsed) {
+        return res.status(404).json({ error: 'Scenario not found and no parsed data provided.' });
+      }
+      const item = {
+        id: req.params.id,
+        title: title || existing?.title || finalParsed?.title || 'Untitled',
+        description: description || existing?.description || finalParsed?.description || '',
+        originalMarkdown: markdown || existing?.originalMarkdown || '',
+        parsedScenario: finalParsed || existing?.parsedScenario,
+        lastSavedAt: new Date().toISOString(),
+      };
+      const saved = await scenarioLibrary.saveScenarioItem(item as any);
+      res.json({ success: true, scenario: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/scenarios/:id', async (req, res) => {
+    try {
+      await scenarioLibrary.deleteScenario(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/scenarios/:id/apply', async (req, res) => {
+    const sc = scenarioLibrary.getScenario(req.params.id);
+    if (!sc) {
+      return res.status(404).json({ error: 'Scenario not found.' });
+    }
+    try {
+      orchestrator.setActiveScenario(sc.parsedScenario);
+      await settings.saveWorkspaceConfig({ activeScenarioId: req.params.id });
+      res.json({ success: true, scenario: sc });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Bot Profiles Library CRUD
+   */
+  app.get('/api/bot-profiles', (req, res) => {
+    res.json({ profiles: botProfileService.getProfiles() });
+  });
+
+  app.post('/api/bot-profiles', async (req, res) => {
+    try {
+      const saved = await botProfileService.saveProfile(req.body);
+      res.json({ success: true, profile: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/bot-profiles/:id', (req, res) => {
+    const prof = botProfileService.getProfile(req.params.id);
+    if (!prof) {
+      return res.status(404).json({ error: 'Profile not found.' });
+    }
+    res.json({ profile: prof });
+  });
+
+  app.put('/api/bot-profiles/:id', async (req, res) => {
+    try {
+      const data = { ...req.body, id: req.params.id };
+      const saved = await botProfileService.saveProfile(data);
+      res.json({ success: true, profile: saved });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/bot-profiles/:id', async (req, res) => {
+    try {
+      await botProfileService.deleteProfile(req.params.id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 

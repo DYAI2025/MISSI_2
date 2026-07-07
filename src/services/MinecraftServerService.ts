@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { MinecraftServerConfig, GameMode, Difficulty, WorldBlock } from '../types/index.js';
+import { SettingsService } from './SettingsService.js';
 
 export class MinecraftServerService {
   private static instance: MinecraftServerService | null = null;
@@ -27,6 +28,7 @@ export class MinecraftServerService {
   private onLogCallbacks: ((log: string) => void)[] = [];
 
   private constructor() {
+    this.loadConfig();
     this.generateProceduralWorld();
   }
 
@@ -35,6 +37,16 @@ export class MinecraftServerService {
       this.instance = new MinecraftServerService();
     }
     return this.instance;
+  }
+
+  public loadConfig() {
+    try {
+      const settings = SettingsService.getInstance();
+      this.config = settings.getServerConfig();
+      this.generateProceduralWorld();
+    } catch (err) {
+      // Ignored if SettingsService is not yet initialized (e.g. in tests)
+    }
   }
 
   public getStatus() {
@@ -53,6 +65,15 @@ export class MinecraftServerService {
   public updateConfig(newConfig: Partial<MinecraftServerConfig>) {
     this.config = { ...this.config, ...newConfig };
     this.generateProceduralWorld();
+    
+    // Asynchronously save to SettingsService
+    try {
+      SettingsService.getInstance().saveServerConfig(this.config).catch(err => {
+        console.error('Failed to persist server config in background:', err);
+      });
+    } catch (err) {
+      // Ignored in unit tests
+    }
   }
 
   public registerLogCallback(cb: (log: string) => void) {

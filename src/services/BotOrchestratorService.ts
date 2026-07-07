@@ -3,6 +3,7 @@ import { LLMProviderService } from './LLMProviderService.js';
 import { MinecraftServerService } from './MinecraftServerService.js';
 import { EventStoreService } from './EventStoreService.js';
 import { MineflayerBotAdapter } from '../adapters/minecraft/MineflayerBotAdapter.js';
+import { SettingsService } from './SettingsService.js';
 
 export class BotOrchestratorService {
   private static instance: BotOrchestratorService | null = null;
@@ -26,66 +27,89 @@ export class BotOrchestratorService {
   }
 
   private setupDefaultProviders() {
-    // Read secret key from environment or use default empty placeholder
-    const geminiKey = process.env.GEMINI_API_KEY || '';
-    
-    this.providers['gemini'] = {
-      id: 'gemini',
-      type: LLMProviderType.GEMINI,
-      name: 'Google Gemini',
-      apiKey: geminiKey,
-      defaultModel: 'gemini-3.5-flash',
-    };
-    
-    this.providers['openai'] = {
-      id: 'openai',
-      type: LLMProviderType.OPENAI,
-      name: 'OpenAI GPT',
-      apiKey: '',
-      defaultModel: 'gpt-4o-mini',
-    };
+    try {
+      const persisted = SettingsService.getInstance().getProviders();
+      persisted.forEach(p => {
+        this.providers[p.id] = p;
+      });
+    } catch {
+      // Read secret key from environment or use default empty placeholder
+      const geminiKey = process.env.GEMINI_API_KEY || '';
+      
+      this.providers['gemini'] = {
+        id: 'gemini',
+        type: LLMProviderType.GEMINI,
+        name: 'Google Gemini',
+        apiKey: geminiKey,
+        defaultModel: 'gemini-3.5-flash',
+      };
+      
+      this.providers['openai'] = {
+        id: 'openai',
+        type: LLMProviderType.OPENAI,
+        name: 'OpenAI GPT',
+        apiKey: '',
+        defaultModel: 'gpt-4o-mini',
+      };
 
-    this.providers['anthropic'] = {
-      id: 'anthropic',
-      type: LLMProviderType.ANTHROPIC,
-      name: 'Anthropic Claude',
-      apiKey: '',
-      defaultModel: 'claude-3-5-haiku-latest',
-    };
+      this.providers['anthropic'] = {
+        id: 'anthropic',
+        type: LLMProviderType.ANTHROPIC,
+        name: 'Anthropic Claude',
+        apiKey: '',
+        defaultModel: 'claude-3-5-haiku-latest',
+      };
 
-    this.providers['openrouter'] = {
-      id: 'openrouter',
-      type: LLMProviderType.OPENROUTER,
-      name: 'OpenRouter',
-      apiKey: '',
-      defaultModel: 'google/gemini-2.5-flash',
-    };
+      this.providers['openrouter'] = {
+        id: 'openrouter',
+        type: LLMProviderType.OPENROUTER,
+        name: 'OpenRouter',
+        apiKey: '',
+        defaultModel: 'google/gemini-2.5-flash',
+      };
 
-    this.providers['ollama'] = {
-      id: 'ollama',
-      type: LLMProviderType.OLLAMA,
-      name: 'Ollama Local',
-      apiKey: '',
-      customUrl: 'http://localhost:11434',
-      defaultModel: 'llama3',
-    };
+      this.providers['ollama'] = {
+        id: 'ollama',
+        type: LLMProviderType.OLLAMA,
+        name: 'Ollama Local',
+        apiKey: '',
+        customUrl: 'http://localhost:11434',
+        defaultModel: 'llama3',
+      };
 
-    this.providers['lmstudio'] = {
-      id: 'lmstudio',
-      type: LLMProviderType.LMSTUDIO,
-      name: 'LM Studio',
-      apiKey: '',
-      customUrl: 'http://localhost:1234',
-      defaultModel: 'meta-llama-3-8b-instruct',
-    };
+      this.providers['lmstudio'] = {
+        id: 'lmstudio',
+        type: LLMProviderType.LMSTUDIO,
+        name: 'LM Studio',
+        apiKey: '',
+        customUrl: 'http://localhost:1234',
+        defaultModel: 'meta-llama-3-8b-instruct',
+      };
+    }
   }
 
   public getProviders(): LLMProviderConfig[] {
-    return Object.values(this.providers);
+    try {
+      return SettingsService.getInstance().getProviders();
+    } catch {
+      return Object.values(this.providers);
+    }
   }
 
   public updateProvider(config: LLMProviderConfig) {
-    this.providers[config.id] = { ...this.providers[config.id], ...config };
+    try {
+      SettingsService.getInstance().saveProvider(config).then(saved => {
+        this.providers[saved.id] = saved;
+      }).catch(err => {
+        console.error('Failed to save provider config asynchronously:', err);
+      });
+    } catch {
+      this.providers[config.id] = { ...this.providers[config.id], ...config };
+    }
+  }
+
+  public setActiveScenario(scenario: Scenario) {
+    this.activeScenario = scenario;
   }
 
   public getBots(): BotConfig[] {
