@@ -99,12 +99,21 @@ export default function App() {
     }
   };
 
-  const handleStartServer = async () => {
+  const handleStartServer = async (acceptEULA: boolean = false, useEmulator: boolean = false) => {
     try {
-      await fetch('/api/server/start', { method: 'POST' });
+      const res = await fetch('/api/server/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acceptEULA, useEmulator }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Server startup failed.');
+      }
       await pollStatus();
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to start server:', err);
+      throw err;
     }
   };
 
@@ -303,6 +312,7 @@ export default function App() {
             onSpawnBots={handleSpawnBots}
             serverStatus={state.serverStatus}
             activeScenario={state.activeScenario}
+            onApplyWorldConfig={handleUpdateConfig}
           />
 
           <ProvidersCard

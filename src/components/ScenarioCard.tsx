@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Scenario } from '../types/index.js';
 import { DEFAULT_SCENARIOS } from '../data/scenarios.js';
-import { FileCode, AlertCircle, Sparkles, ChevronDown } from 'lucide-react';
+import { FileCode, AlertCircle, Sparkles, ChevronDown, Upload } from 'lucide-react';
 
 interface ScenarioCardProps {
   onParseScenario: (markdown: string) => Promise<Scenario | null>;
   onSpawnBots: (scenario: Scenario) => Promise<void>;
   serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
   activeScenario?: Scenario;
+  onApplyWorldConfig?: (config: any) => Promise<void>;
 }
 
 export const ScenarioCard: React.FC<ScenarioCardProps> = ({
@@ -15,6 +16,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   onSpawnBots,
   serverStatus,
   activeScenario,
+  onApplyWorldConfig,
 }) => {
   const [markdown, setMarkdown] = useState(DEFAULT_SCENARIOS[0].markdown);
   const [parsedScenario, setParsedScenario] = useState<Scenario | null>(activeScenario || null);
@@ -22,18 +24,15 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   const [isParsing, setIsParsing] = useState(false);
   const [isSpawning, setIsSpawning] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  
+  const [isDragging, setIsDragging] = useState(false);
+  const [applySuccess, setApplySuccess] = useState(false);
 
-  const handlePresetSelect = (presetMarkdown: string) => {
-    setMarkdown(presetMarkdown);
-    setShowPresets(false);
-    setError(null);
-  };
-
-  const handleParse = async () => {
+  const handleParseScenario = async (content: string) => {
     setError(null);
     setIsParsing(true);
     try {
-      const scenario = await onParseScenario(markdown);
+      const scenario = await onParseScenario(content);
       if (scenario) {
         setParsedScenario(scenario);
       }
@@ -43,6 +42,77 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
     } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = () => {
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        if (event.target?.result) {
+          const content = event.target.result as string;
+          setMarkdown(content);
+          setError(null);
+          setIsParsing(true);
+          try {
+            const scenario = await onParseScenario(content);
+            if (scenario) {
+              setParsedScenario(scenario);
+            }
+          } catch (err: any) {
+            setError(err.message || 'Failed to parse scenario markdown.');
+            setParsedScenario(null);
+          } finally {
+            setIsParsing(false);
+          }
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        if (event.target?.result) {
+          const content = event.target.result as string;
+          setMarkdown(content);
+          setError(null);
+          setIsParsing(true);
+          try {
+            const scenario = await onParseScenario(content);
+            if (scenario) {
+              setParsedScenario(scenario);
+            }
+          } catch (err: any) {
+            setError(err.message || 'Failed to parse scenario markdown.');
+            setParsedScenario(null);
+          } finally {
+            setIsParsing(false);
+          }
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handlePresetSelect = (presetMarkdown: string) => {
+    setMarkdown(presetMarkdown);
+    setShowPresets(false);
+    setError(null);
   };
 
   const handleSpawn = async () => {
@@ -93,17 +163,40 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 flex-grow">
         {/* Editor Area */}
-        <div className="flex flex-col h-full min-h-[300px]">
-          <label className="block text-[9px] text-brand-muted uppercase mb-1.5 font-mono italic">Scenario Markdown Source</label>
-          <textarea
-            className="w-full flex-grow text-xs font-mono bg-brand-bg border border-brand-border rounded-none p-3 text-brand-text focus:outline-none focus:border-brand-green resize-none h-[280px]"
-            value={markdown}
-            onChange={(e) => setMarkdown(e.target.value)}
-            placeholder="# Scenario: My Adventure..."
-          />
+        <div 
+          className="flex flex-col h-full min-h-[300px]"
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          <div className="flex flex-col gap-1.5 mb-2.5">
+            <label className="block text-[9px] text-brand-muted uppercase font-mono italic">Scenario Markdown Source</label>
+            <input
+              type="file"
+              onChange={handleFileUpload}
+              accept=".md,.txt"
+              className="w-full text-xs font-mono text-brand-muted bg-brand-bg border border-brand-border p-1.5 rounded-none cursor-pointer file:mr-3 file:py-1 file:px-2.5 file:border-0 file:text-[10px] file:font-mono file:font-bold file:uppercase file:bg-brand-green file:text-brand-bg hover:file:opacity-90 file:cursor-pointer transition-colors"
+            />
+          </div>
+          <div className="relative flex-grow flex flex-col">
+            <textarea
+              className={`w-full flex-grow text-xs font-mono bg-brand-bg border rounded-none p-3 text-brand-text focus:outline-none focus:border-brand-green resize-none h-[280px] transition-colors ${
+                isDragging ? 'border-brand-green bg-brand-green/5' : 'border-brand-border'
+              }`}
+              value={markdown}
+              onChange={(e) => setMarkdown(e.target.value)}
+              placeholder="# Scenario: My Adventure..."
+            />
+            {isDragging && (
+              <div className="absolute inset-0 bg-brand-bg/85 border-2 border-dashed border-brand-green flex flex-col items-center justify-center text-brand-green pointer-events-none">
+                <Upload className="w-8 h-8 animate-bounce mb-2" />
+                <span className="text-xs font-mono font-bold uppercase tracking-wider">Drop scenario file here</span>
+              </div>
+            )}
+          </div>
           <div className="mt-3 flex justify-end">
             <button
-              onClick={handleParse}
+              onClick={() => handleParseScenario(markdown)}
               disabled={isParsing}
               className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors"
             >
@@ -162,6 +255,49 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                   </table>
                 </div>
               </div>
+
+              {parsedScenario.worldConfig && (
+                <div className="bg-brand-panel border border-brand-border p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] text-brand-green font-mono font-bold tracking-widest uppercase">Detected World Settings</span>
+                    <span className="text-[9px] font-mono text-brand-muted border border-brand-border px-1">AUTO-PARSED</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-[10px] font-mono text-brand-muted">
+                    {parsedScenario.worldConfig.seed && <div>Seed: <strong className="text-brand-text">{parsedScenario.worldConfig.seed}</strong></div>}
+                    {parsedScenario.worldConfig.gameMode && <div>Mode: <strong className="text-brand-text uppercase">{parsedScenario.worldConfig.gameMode}</strong></div>}
+                    {parsedScenario.worldConfig.difficulty && <div>Diff: <strong className="text-brand-text uppercase">{parsedScenario.worldConfig.difficulty}</strong></div>}
+                    {parsedScenario.worldConfig.port && <div>Port: <strong className="text-brand-text">{parsedScenario.worldConfig.port}</strong></div>}
+                  </div>
+                  {onApplyWorldConfig && serverStatus === 'stopped' && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          if (onApplyWorldConfig && parsedScenario.worldConfig) {
+                            await onApplyWorldConfig({
+                              seed: parsedScenario.worldConfig.seed,
+                              gameMode: parsedScenario.worldConfig.gameMode,
+                              difficulty: parsedScenario.worldConfig.difficulty,
+                              port: parsedScenario.worldConfig.port,
+                            });
+                            setApplySuccess(true);
+                            setTimeout(() => setApplySuccess(false), 3000);
+                          }
+                        } catch (err: any) {
+                          setError('Failed to apply configuration: ' + err.message);
+                        }
+                      }}
+                      className="w-full text-center py-1 bg-brand-border hover:bg-brand-border-light text-brand-text border border-brand-border font-mono text-[9px] uppercase font-bold tracking-wider rounded-none cursor-pointer"
+                    >
+                      Apply settings to server host
+                    </button>
+                  )}
+                  {applySuccess && (
+                    <div className="text-[10px] text-brand-green font-mono uppercase font-bold text-center mt-1 animate-pulse">
+                      ✓ Applied to Server Host!
+                    </div>
+                  )}
+                </div>
+              )}
 
               {serverStatus !== 'running' ? (
                 <div className="bg-yellow-500/5 border border-yellow-500/20 rounded-none p-3 flex items-start gap-2.5">

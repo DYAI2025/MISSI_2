@@ -79,13 +79,15 @@ export class EventStoreService {
   private async saveManifestToDisk(manifest: RunManifest) {
     try {
       const runsDir = path.resolve(process.cwd(), 'runs');
-      await fs.mkdir(runsDir, { recursive: true });
+      const runDir = path.join(runsDir, manifest.id);
+      await fs.mkdir(runDir, { recursive: true });
 
-      const filepath = path.join(runsDir, `manifest_${manifest.id}.json`);
       // Strip credentials if they are present anywhere in logs
       const sanitizedLogs = manifest.logs.map(log => {
         if (log.details?.apiKey) {
-          return { ...log, details: { ...log.details, apiKey: '***HIDDEN***' } };
+          const detailsCopy = { ...log.details };
+          delete detailsCopy.apiKey;
+          return { ...log, details: detailsCopy };
         }
         return log;
       });
@@ -95,33 +97,63 @@ export class EventStoreService {
         logs: sanitizedLogs,
       };
 
-      await fs.writeFile(filepath, JSON.stringify(sanitizedManifest, null, 2));
-      console.log(`Saved simulation run manifest to ${filepath}`);
+      // 1. Write structured directory layout files
+      await fs.writeFile(path.join(runDir, 'manifest.json'), JSON.stringify(sanitizedManifest, null, 2));
+
+      const eventsJsonl = sanitizedLogs.map(log => JSON.stringify(log)).join('\n');
+      await fs.writeFile(path.join(runDir, 'events.jsonl'), eventsJsonl);
+
+      const providerCalls = sanitizedLogs.filter(log => log.type === EventType.LLM_CALL || log.type === EventType.BOT_THINK);
+      const providerCallsJsonl = providerCalls.map(log => JSON.stringify(log)).join('\n');
+      await fs.writeFile(path.join(runDir, 'provider-calls.jsonl'), providerCallsJsonl);
+
+      // 2. Also write flat legacy file for backward compatibility
+      const legacyFilepath = path.join(runsDir, `manifest_${manifest.id}.json`);
+      await fs.writeFile(legacyFilepath, JSON.stringify(sanitizedManifest, null, 2));
+
+      console.log(`Saved structured run files to directory: ${runDir}`);
     } catch (err) {
-      console.error('Failed to save run manifest file:', err);
+      console.error('Failed to write run files to disk:', err);
     }
   }
 
   public async getCompletedRunsList(): Promise<{ id: string; startTime: string; scenarioTitle: string; status: string }[]> {
     try {
       const runsDir = path.resolve(process.cwd(), 'runs');
-      const files = await fs.readdir(runsDir);
+      const items = await fs.readdir(runsDir, { withFileTypes: true });
       const list = [];
 
-      for (const file of files) {
-        if (file.startsWith('manifest_') && file.endsWith('.json')) {
-          const content = await fs.readFile(path.join(runsDir, file), 'utf-8');
-          const json = JSON.parse(content);
-          list.push({
-            id: json.id,
-            startTime: json.startTime,
-            scenarioTitle: json.scenarioTitle,
-            status: json.status,
-          });
+      for (const item of items) {
+        if (item.isDirectory() && item.name.startsWith('run_')) {
+          const runId = item.name;
+          try {
+            const manifestPath = path.join(runsDir, runId, 'manifest.json');
+            const content = await fs.readFile(manifestPath, 'utf-8');
+            const json = JSON.parse(content);
+            list.push({
+              id: json.id,
+              startTime: json.startTime,
+              scenarioTitle: json.scenarioTitle,
+              status: json.status,
+            });
+          } catch {}
+        } else if (item.isFile() && item.name.startsWith('manifest_') && item.name.endsWith('.json')) {
+          try {
+            const content = await fs.readFile(path.join(runsDir, item.name), 'utf-8');
+            const json = JSON.parse(content);
+            list.push({
+              id: json.id,
+              startTime: json.startTime,
+              scenarioTitle: json.scenarioTitle,
+              status: json.status,
+            });
+          } catch {}
         }
       }
 
-      return list.sort((a, b) => b.startTime.localeCompare(a.startTime));
+      // Remove duplicate IDs that might exist in both legacy and directory format
+      const uniqueList = Array.from(new Map(list.map(item => [item.id, item])).values());
+      return uniqueList.sort((a, b) => b.startTime.localeCompare(a.startTime));
     } catch {
       return [];
     }
@@ -130,9 +162,18 @@ export class EventStoreService {
   public async getRunDetails(id: string): Promise<RunManifest | null> {
     try {
       const runsDir = path.resolve(process.cwd(), 'runs');
-      const filepath = path.join(runsDir, `manifest_${id}.json`);
-      const content = await fs.readFile(filepath, 'utf-8');
-      return JSON.parse(content);
+      
+      // Try directory format first
+      try {
+        const manifestPath = path.join(runsDir, id, 'manifest.json');
+        const content = await fs.readFile(manifestPath, 'utf-8');
+        return JSON.parse(content);
+      } catch {
+        // Fallback to legacy flat file
+        const legacyFilepath = path.join(runsDir, `manifest_${id}.json`);
+        const content = await fs.readFile(legacyFilepath, 'utf-8');
+        return JSON.parse(content);
+      }
     } catch {
       return null;
     }

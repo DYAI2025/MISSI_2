@@ -8,10 +8,15 @@ import { EventStoreService } from './src/services/EventStoreService.js';
 import { BotOrchestratorService } from './src/services/BotOrchestratorService.js';
 import { GameMode, Difficulty, EventType } from './src/types/index.js';
 import { SmokeTestService } from './src/services/SmokeTestService.js';
+import { LLMProviderService } from './src/services/LLMProviderService.js';
 
-// Resolve directory paths for ES Modules
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Resolve directory paths for both ES Modules and CommonJS bundles
+let currentDirname = '';
+try {
+  currentDirname = path.dirname(fileURLToPath(import.meta.url));
+} catch {
+  currentDirname = __dirname;
+}
 
 async function startServer() {
   const app = express();
@@ -87,8 +92,35 @@ async function startServer() {
    */
   app.post('/api/server/start', async (req, res) => {
     try {
-      await serverService.startServer();
+      const { acceptEULA, useEmulator } = req.body;
+      await serverService.startServer(!!acceptEULA, !!useEmulator);
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Provider connectivity smoke test
+   */
+  app.post('/api/provider/test', async (req, res) => {
+    try {
+      const { id, type, apiKey, customUrl, defaultModel } = req.body;
+      if (!id || !type) {
+        return res.status(400).json({ error: 'Provider ID and Type are required for verification test.' });
+      }
+
+      const config = {
+        id,
+        type,
+        name: id === 'gemini' ? 'Google Gemini' : id === 'openai' ? 'OpenAI GPT' : id === 'anthropic' ? 'Anthropic Claude' : id === 'openrouter' ? 'OpenRouter' : id === 'ollama' ? 'Ollama' : 'LM Studio',
+        apiKey: apiKey || '',
+        customUrl: customUrl || undefined,
+        defaultModel: defaultModel || '',
+      };
+
+      const result = await LLMProviderService.testConnection(config);
+      res.json(result);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

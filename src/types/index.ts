@@ -60,6 +60,12 @@ export interface Scenario {
   description: string;
   objectives: string[];
   bots: BotConfig[];
+  worldConfig?: {
+    seed?: string;
+    gameMode?: string;
+    difficulty?: string;
+    port?: number;
+  };
 }
 
 export enum EventType {

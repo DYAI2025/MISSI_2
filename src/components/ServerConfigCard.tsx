@@ -7,7 +7,7 @@ interface ServerConfigCardProps {
   runtimeMode: 'java-blocked' | 'node-emulator';
   config: MinecraftServerConfig;
   onUpdateConfig: (config: Partial<MinecraftServerConfig>) => Promise<void>;
-  onStartServer: () => Promise<void>;
+  onStartServer: (acceptEULA: boolean, useEmulator: boolean) => Promise<void>;
   onStopServer: () => Promise<void>;
   onSendCommand: (command: string) => Promise<void>;
 }
@@ -31,6 +31,19 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [isSaving, setIsSaving] = useState(false);
   const [isSmokeTesting, setIsSmokeTesting] = useState(false);
   const [smokeTestResult, setSmokeTestResult] = useState<{ success: boolean; logs: string[] } | null>(null);
+  
+  const [acceptEULA, setAcceptEULA] = useState(false);
+  const [useEmulator, setUseEmulator] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  const handleStart = async () => {
+    setStartError(null);
+    try {
+      await onStartServer(acceptEULA, useEmulator);
+    } catch (err: any) {
+      setStartError(err.message || 'Failed to start server.');
+    }
+  };
 
   const handleRunSmokeTest = async () => {
     setIsSmokeTesting(true);
@@ -188,11 +201,50 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         )}
       </form>
 
+      {/* EULA Acceptance & Sandbox Emulator */}
+      {serverStatus === 'stopped' && (
+        <div className="mt-4 border-t border-brand-border pt-4 space-y-3">
+          <label className="flex items-start gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
+              checked={acceptEULA}
+              onChange={(e) => setAcceptEULA(e.target.checked)}
+            />
+            <span className="text-[10px] font-mono text-brand-text leading-tight">
+              I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer" className="text-brand-green underline hover:text-brand-text">Minecraft EULA</a>. Required to launch a real server.
+            </span>
+          </label>
+
+          <label className="flex items-start gap-2.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
+              checked={useEmulator}
+              onChange={(e) => setUseEmulator(e.target.checked)}
+            />
+            <span className="text-[10px] font-mono text-brand-text leading-tight">
+              Use Sandbox Emulator. Bypasses Java/server.jar check & runs local simulation.
+            </span>
+          </label>
+        </div>
+      )}
+
+      {startError && (
+        <div className="mt-3 bg-red-950/40 border border-red-500/30 p-2.5 rounded-none text-[10px] font-mono text-red-400 leading-relaxed">
+          <div className="font-bold uppercase flex items-center gap-1.5 mb-1 text-red-300">
+            <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+            Startup Blocked
+          </div>
+          {startError}
+        </div>
+      )}
+
       {/* Control Buttons */}
       <div className="flex gap-3 mt-4 border-t border-brand-border pt-4">
         {serverStatus === 'stopped' ? (
           <button
-            onClick={onStartServer}
+            onClick={handleStart}
             className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-none bg-brand-green hover:opacity-90 text-brand-bg font-mono font-bold text-xs uppercase transition-all"
           >
             <Play className="w-3.5 h-3.5 fill-brand-bg" /> Start Minecraft Server

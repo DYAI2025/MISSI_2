@@ -350,4 +350,25 @@ export class LLMProviderService {
       throw new Error(`Failed to parse JSON response: ${text}`);
     }
   }
+
+  /**
+   * Performs a rapid, cheap connection test to verify provider and key validity.
+   */
+  public static async testConnection(provider: LLMProviderConfig): Promise<{ success: boolean; message: string }> {
+    const sysInstruction = "You are a connectivity test runner. Respond with exactly the JSON: {\"rationale\": \"tested\", \"action\": \"idle\", \"parameters\": {}}";
+    const prompt = "Execute connection test. Return idle action JSON.";
+    
+    try {
+      const result = await this.getBotDecision(provider, sysInstruction, prompt);
+      if (result) {
+        return {
+          success: true,
+          message: `Successfully connected to ${provider.name} using model "${provider.defaultModel || 'default'}". Gateway returned valid decision structure.`,
+        };
+      }
+      throw new Error("Invalid decision structure returned from test call.");
+    } catch (err: any) {
+      throw new Error(`Connection Test Failed: ${err.message || err}`);
+    }
+  }
 }

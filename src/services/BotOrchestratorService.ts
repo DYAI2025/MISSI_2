@@ -2,6 +2,7 @@ import { BotConfig, Scenario, EventType, LLMProviderConfig, LLMProviderType, Wor
 import { LLMProviderService } from './LLMProviderService.js';
 import { MinecraftServerService } from './MinecraftServerService.js';
 import { EventStoreService } from './EventStoreService.js';
+import { MineflayerBotAdapter } from '../adapters/minecraft/MineflayerBotAdapter.js';
 
 export class BotOrchestratorService {
   private static instance: BotOrchestratorService | null = null;
@@ -11,6 +12,7 @@ export class BotOrchestratorService {
   private providers: Record<string, LLMProviderConfig> = {};
   private activeScenario: Scenario | null = null;
   private currentStep: number = 0;
+  private botAdapters: Record<string, MineflayerBotAdapter> = {};
 
   private constructor() {
     this.setupDefaultProviders();
@@ -109,18 +111,63 @@ export class BotOrchestratorService {
       throw new Error('Minecraft server is not running. Launch the server first.');
     }
 
+    // Clean up any existing bot connections
+    for (const bId of Object.keys(this.botAdapters)) {
+      try {
+        this.botAdapters[bId].disconnect();
+      } catch {}
+    }
+    this.botAdapters = {};
+
     this.activeScenario = scenario;
     this.activeBots = JSON.parse(JSON.stringify(scenario.bots)); // deep clone
     this.currentStep = 0;
 
-    // Log connection sequence
+    const serverPort = serverService.getConfig().port || 25565;
+
+    // Log connection sequence and attempt real Mineflayer socket joins
     for (const bot of this.activeBots) {
       eventStore.addEvent(
         EventType.BOT_JOIN,
-        `${bot.name} (assigned role: "${bot.role}") joined the server. Spawn position: [x:${bot.x}, y:${bot.y}, z:${bot.z}].`,
+        `[Orchestrator] Attaching bot client "${bot.name}" (role: "${bot.role}").`,
         bot.id,
         bot.name
       );
+
+      // Create and connect a real Mineflayer client adapter
+      const adapter = new MineflayerBotAdapter(
+        bot.name,
+        serverPort,
+        (msg, isError) => {
+          eventStore.addEvent(
+            isError ? EventType.ERROR : EventType.SYSTEM,
+            msg,
+            bot.id,
+            bot.name
+          );
+        }
+      );
+
+      this.botAdapters[bot.id] = adapter;
+      
+      // Connect asynchronously. If it fails, the event is logged and we run in fallback engine.
+      adapter.connect().then((connected) => {
+        if (!connected) {
+          eventStore.addEvent(
+            EventType.ERROR,
+            `[Real Socket Downstream] Bot "${bot.name}" could not connect to local host on port ${serverPort} (server may be offline/blocked). Fallback internal engine will handle actions.`,
+            bot.id,
+            bot.name
+          );
+        } else {
+          eventStore.addEvent(
+            EventType.SYSTEM,
+            `[Real Socket Success] Bot "${bot.name}" successfully established connection and logged into active Minecraft world seed ${serverService.getConfig().seed}.`,
+            bot.id,
+            bot.name
+          );
+        }
+      });
     }
   }
 
@@ -355,6 +402,12 @@ What is your next action? Select the action and parameters carefully.`;
     const eventStore = EventStoreService.getInstance();
     const action = decision.action.toLowerCase();
     const params = decision.parameters || {};
+
+    // Forward action to the real Mineflayer bot socket adapter if active
+    const adapter = this.botAdapters[bot.id];
+    if (adapter) {
+      adapter.performAction(action, params);
+    }
 
     if (decision.message) {
       eventStore.addEvent(

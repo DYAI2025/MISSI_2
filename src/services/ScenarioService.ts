@@ -10,8 +10,9 @@ export class ScenarioService {
     let description = 'A simulation run.';
     const objectives: string[] = [];
     const bots: BotConfig[] = [];
+    const worldConfig: { seed?: string; gameMode?: string; difficulty?: string; port?: number } = {};
 
-    let currentSection: 'meta' | 'objectives' | 'bots' | 'none' = 'meta';
+    let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'none' = 'meta';
     let currentBot: Partial<BotConfig> | null = null;
 
     for (let i = 0; i < lines.length; i++) {
@@ -25,6 +26,11 @@ export class ScenarioService {
           title = scenarioMatch[2].trim();
         }
         currentSection = 'meta';
+        continue;
+      }
+
+      if (line.startsWith('## World Configuration') || line.startsWith('## World Config') || line.startsWith('## Server Config')) {
+        currentSection = 'world_config';
         continue;
       }
 
@@ -42,6 +48,17 @@ export class ScenarioService {
       if (currentSection === 'meta') {
         if (!line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*')) {
           description = line;
+        }
+      } else if (currentSection === 'world_config') {
+        if (line.startsWith('- Seed:') || line.startsWith('* Seed:')) {
+          worldConfig.seed = line.replace(/^[-*]\s*Seed:\s*/i, '').trim();
+        } else if (line.startsWith('- GameMode:') || line.startsWith('* GameMode:')) {
+          worldConfig.gameMode = line.replace(/^[-*]\s*GameMode:\s*/i, '').trim().toLowerCase();
+        } else if (line.startsWith('- Difficulty:') || line.startsWith('* Difficulty:')) {
+          worldConfig.difficulty = line.replace(/^[-*]\s*Difficulty:\s*/i, '').trim().toLowerCase();
+        } else if (line.startsWith('- Port:') || line.startsWith('* Port:')) {
+          const p = parseInt(line.replace(/^[-*]\s*Port:\s*/i, '').trim(), 10);
+          if (!isNaN(p)) worldConfig.port = p;
         }
       } else if (currentSection === 'objectives') {
         const itemMatch = line.match(/^[-*+]\s+(.*)$/) || line.match(/^\d+\.\s+(.*)$/);
@@ -116,6 +133,7 @@ export class ScenarioService {
       description,
       objectives: objectives.length > 0 ? objectives : ['Explore the Minecraft world'],
       bots: bots.length > 0 ? bots : [this.getDefaultBot('LumberjackBob')],
+      worldConfig: Object.keys(worldConfig).length > 0 ? worldConfig : undefined,
     };
   }
 

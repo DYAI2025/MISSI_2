@@ -24,6 +24,9 @@ export const ProvidersCard: React.FC<ProvidersCardProps> = ({
   const [showKey, setShowKey] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
   const [success, setSuccess] = useState(false);
+  
+  const [isTesting, setIsTesting] = useState(false);
+  const [testFeedback, setTestFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   const activeProvider = providers.find(p => p.id === activeId);
 
@@ -33,8 +36,38 @@ export const ProvidersCard: React.FC<ProvidersCardProps> = ({
       setCustomUrl(activeProvider.customUrl || '');
       setDefaultModel(activeProvider.defaultModel || '');
       setSuccess(false);
+      setTestFeedback(null);
     }
   }, [activeId, activeProvider]);
+
+  const handleTestConnection = async () => {
+    if (!activeProvider) return;
+    setIsTesting(true);
+    setTestFeedback(null);
+    try {
+      const res = await fetch('/api/provider/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: activeProvider.id,
+          type: activeProvider.type,
+          apiKey: apiKey,
+          customUrl: customUrl,
+          defaultModel: defaultModel,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestFeedback({ success: true, message: data.message });
+      } else {
+        setTestFeedback({ success: false, message: data.error || 'Connection verification failed.' });
+      }
+    } catch (err: any) {
+      setTestFeedback({ success: false, message: err.message || 'Network error executing connectivity test.' });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -166,6 +199,40 @@ export const ProvidersCard: React.FC<ProvidersCardProps> = ({
                   />
                 </div>
               )}
+
+              <div className="bg-brand-panel border border-brand-border p-3 space-y-2 mt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] text-brand-green font-mono font-bold tracking-widest uppercase">Gateway Connection Test</span>
+                  <span className="text-[9px] font-mono text-brand-muted border border-brand-border px-1">GATEWAY-PING</span>
+                </div>
+                <button
+                  type="button"
+                  disabled={isTesting}
+                  onClick={handleTestConnection}
+                  className="w-full text-center py-1.5 bg-brand-border-light hover:bg-brand-border text-brand-text border border-brand-border font-mono text-[10px] uppercase font-bold tracking-wider rounded-none cursor-pointer flex items-center justify-center gap-2"
+                >
+                  {isTesting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-brand-green" />
+                      Testing gateway socket...
+                    </>
+                  ) : (
+                    'Verify Connection'
+                  )}
+                </button>
+                {testFeedback && (
+                  <div className={`p-2 font-mono text-[10px] border leading-relaxed ${
+                    testFeedback.success 
+                      ? 'bg-brand-green/5 text-brand-green border-brand-green/20' 
+                      : 'bg-red-950/40 text-red-400 border-red-500/20'
+                  }`}>
+                    <div className="font-bold uppercase mb-1">
+                      {testFeedback.success ? '✓ Gateway Verified' : '⚠ Verification Failed'}
+                    </div>
+                    {testFeedback.message}
+                  </div>
+                )}
+              </div>
 
               <div className="flex items-center justify-between border-t border-brand-border pt-4 mt-6">
                 <span className="text-[10px] text-brand-muted flex items-center gap-1 font-mono uppercase">
