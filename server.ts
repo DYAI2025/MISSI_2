@@ -120,8 +120,58 @@ async function startServer() {
   });
 
   /**
-   * Provider connectivity smoke test
+   * Provider connectivity smoke test (Legacy and new routes)
    */
+  app.post('/api/providers/:id/test', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { type, apiKey, customUrl, defaultModel } = req.body;
+      
+      const providerType = type || settings.getProviders().find(p => p.id === id)?.type;
+      if (!providerType) {
+        return res.status(400).json({ error: 'Provider type is required for verification test.' });
+      }
+
+      let effectiveApiKey = apiKey;
+      if (effectiveApiKey === undefined || effectiveApiKey === '' || effectiveApiKey.startsWith('*')) {
+        effectiveApiKey = secrets.getSecret(id);
+        if (!effectiveApiKey) {
+          if (providerType === 'gemini') {
+            effectiveApiKey = process.env.GEMINI_API_KEY || '';
+          } else if (providerType === 'openai') {
+            effectiveApiKey = process.env.OPENAI_API_KEY || '';
+          } else if (providerType === 'anthropic') {
+            effectiveApiKey = process.env.ANTHROPIC_API_KEY || '';
+          } else if (providerType === 'openrouter') {
+            effectiveApiKey = process.env.OPENROUTER_API_KEY || '';
+          }
+        }
+      }
+
+      if (!effectiveApiKey && providerType !== 'ollama' && providerType !== 'lmstudio') {
+        return res.status(400).json({ error: 'missing_key', message: 'API key is missing or not configured.' });
+      }
+
+      const storedProvider = settings.getProviders().find(p => p.id === id);
+      const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
+      const finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
+
+      const config = {
+        id,
+        type: providerType,
+        name: id === 'gemini' ? 'Google Gemini' : id === 'openai' ? 'OpenAI GPT' : id === 'anthropic' ? 'Anthropic Claude' : id === 'openrouter' ? 'OpenRouter' : id === 'ollama' ? 'Ollama' : 'LM Studio',
+        apiKey: effectiveApiKey || '',
+        customUrl: finalCustomUrl || undefined,
+        defaultModel: finalDefaultModel || '',
+      };
+
+      const result = await LLMProviderService.testConnection(config);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post('/api/provider/test', async (req, res) => {
     try {
       const { id, type, apiKey, customUrl, defaultModel } = req.body;
@@ -129,13 +179,37 @@ async function startServer() {
         return res.status(400).json({ error: 'Provider ID and Type are required for verification test.' });
       }
 
+      let effectiveApiKey = apiKey;
+      if (effectiveApiKey === undefined || effectiveApiKey === '' || effectiveApiKey.startsWith('*')) {
+        effectiveApiKey = secrets.getSecret(id);
+        if (!effectiveApiKey) {
+          if (type === 'gemini') {
+            effectiveApiKey = process.env.GEMINI_API_KEY || '';
+          } else if (type === 'openai') {
+            effectiveApiKey = process.env.OPENAI_API_KEY || '';
+          } else if (type === 'anthropic') {
+            effectiveApiKey = process.env.ANTHROPIC_API_KEY || '';
+          } else if (type === 'openrouter') {
+            effectiveApiKey = process.env.OPENROUTER_API_KEY || '';
+          }
+        }
+      }
+
+      if (!effectiveApiKey && type !== 'ollama' && type !== 'lmstudio') {
+        return res.status(400).json({ error: 'missing_key', message: 'API key is missing or not configured.' });
+      }
+
+      const storedProvider = settings.getProviders().find(p => p.id === id);
+      const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
+      const finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
+
       const config = {
         id,
         type,
         name: id === 'gemini' ? 'Google Gemini' : id === 'openai' ? 'OpenAI GPT' : id === 'anthropic' ? 'Anthropic Claude' : id === 'openrouter' ? 'OpenRouter' : id === 'ollama' ? 'Ollama' : 'LM Studio',
-        apiKey: apiKey || '',
-        customUrl: customUrl || undefined,
-        defaultModel: defaultModel || '',
+        apiKey: effectiveApiKey || '',
+        customUrl: finalCustomUrl || undefined,
+        defaultModel: finalDefaultModel || '',
       };
 
       const result = await LLMProviderService.testConnection(config);
@@ -279,17 +353,55 @@ async function startServer() {
   });
 
   /**
+   * Get Settings Aggregate
+   */
+  app.get('/api/settings', (req, res) => {
+    try {
+      const serverConfig = settings.getServerConfig();
+      const workspace = settings.getWorkspaceConfig();
+      const list = settings.getProviders().map(p => {
+        const meta = secrets.getSecretMetadata(p.id);
+        return {
+          id: p.id,
+          type: p.type,
+          name: p.name,
+          customUrl: p.customUrl,
+          defaultModel: p.defaultModel,
+          isConfigured: !!(p.apiKey && p.apiKey.length > 0),
+          secretMetadata: meta,
+        };
+      });
+      const scenarios = scenarioLibrary.getScenarios();
+      const botProfiles = botProfileService.getProfiles();
+
+      res.json({
+        serverConfig,
+        workspace,
+        providers: list,
+        scenarios,
+        botProfiles,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Get LLM provider definitions (safely concealing secrets)
    */
   app.get('/api/providers', (req, res) => {
-    const list = settings.getProviders().map(p => ({
-      id: p.id,
-      type: p.type,
-      name: p.name,
-      customUrl: p.customUrl,
-      defaultModel: p.defaultModel,
-      isConfigured: !!(p.apiKey && p.apiKey.length > 0),
-    }));
+    const list = settings.getProviders().map(p => {
+      const meta = secrets.getSecretMetadata(p.id);
+      return {
+        id: p.id,
+        type: p.type,
+        name: p.name,
+        customUrl: p.customUrl,
+        defaultModel: p.defaultModel,
+        isConfigured: !!(p.apiKey && p.apiKey.length > 0),
+        secretMetadata: meta,
+      };
+    });
     res.json({ providers: list });
   });
 
@@ -327,6 +439,7 @@ async function startServer() {
         id: req.params.id,
       });
       orchestrator.updateProvider(saved);
+      const meta = secrets.getSecretMetadata(saved.id);
       res.json({
         success: true,
         provider: {
@@ -336,6 +449,7 @@ async function startServer() {
           customUrl: saved.customUrl,
           defaultModel: saved.defaultModel,
           isConfigured: !!(saved.apiKey && saved.apiKey.length > 0),
+          secretMetadata: meta,
         },
       });
     } catch (err: any) {

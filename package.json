@@ -11,6 +11,7 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "missi:verify:sprint2": "tsx scripts/verify-sprint-2.ts",
     "missi:smoke:server": "tsx scripts/smoke-server.ts",
     "missi:smoke:provider": "tsx scripts/smoke-provider.ts",
     "missi:smoke:bot": "tsx scripts/smoke-bot.ts",

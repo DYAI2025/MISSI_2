@@ -79,6 +79,23 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       setIsLoading(true);
+      try {
+        const settingsRes = await fetch('/api/settings');
+        if (settingsRes.ok) {
+          const settingsData = await settingsRes.json();
+          if (settingsData.providers) {
+            setProviders(settingsData.providers);
+          }
+          if (settingsData.serverConfig) {
+            setState(prev => ({
+              ...prev,
+              serverConfig: settingsData.serverConfig
+            }));
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to hydrate initial settings:', err);
+      }
       await Promise.all([pollStatus(), fetchProviders()]);
       setIsLoading(false);
     };
@@ -231,6 +248,17 @@ export default function App() {
     });
     if (!res.ok) {
       throw new Error('Failed to update provider keys.');
+    }
+    await fetchProviders();
+  };
+
+  const handleDeleteSecret = async (id: string) => {
+    const res = await fetch(`/api/providers/${id}/secret`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to delete secret.');
     }
     await fetchProviders();
   };
@@ -389,6 +417,7 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
           <ProvidersCard
             providers={providers}
             onUpdateProvider={handleUpdateProvider}
+            onDeleteSecret={handleDeleteSecret}
           />
         </section>
 

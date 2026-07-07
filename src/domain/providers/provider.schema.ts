@@ -39,9 +39,17 @@ export interface MaskedProviderResponse {
   customUrl?: string;
   defaultModel: string;
   isConfigured: boolean;
+  secretMetadata?: {
+    configured: boolean;
+    last4: string;
+    updatedAt: string;
+  } | null;
 }
 
-export function maskProvider(provider: LLMProviderConfig): MaskedProviderResponse {
+export function maskProvider(
+  provider: LLMProviderConfig,
+  secretMetadata?: { configured: boolean; last4: string; updatedAt: string } | null
+): MaskedProviderResponse {
   return {
     id: provider.id,
     type: provider.type,
@@ -49,5 +57,6 @@ export function maskProvider(provider: LLMProviderConfig): MaskedProviderRespons
     customUrl: provider.customUrl,
     defaultModel: provider.defaultModel,
     isConfigured: !!(provider.apiKey && provider.apiKey.length > 0),
+    secretMetadata: secretMetadata || null,
   };
 }

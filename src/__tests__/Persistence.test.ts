@@ -48,13 +48,24 @@ describe('MISSI Live Usability & Persistence Layer', () => {
     await secrets.setSecret('openai', 'sk-test-openai-key-abc123xyz');
     expect(secrets.getSecret('openai')).toBe('sk-test-openai-key-abc123xyz');
 
+    // Metadata checks
+    const meta = secrets.getSecretMetadata('openai');
+    expect(meta).not.toBeNull();
+    expect(meta?.configured).toBe(true);
+    expect(meta?.last4).toBe('3xyz');
+    expect(meta?.updatedAt).toBeTruthy();
+
     // Create a new instance of SecretStoreService to simulate backend restart
     const secretsAfterRestart = SecretStoreService.getInstance();
     await secretsAfterRestart.init();
     expect(secretsAfterRestart.getSecret('openai')).toBe('sk-test-openai-key-abc123xyz');
 
+    const metaAfterRestart = secretsAfterRestart.getSecretMetadata('openai');
+    expect(metaAfterRestart?.last4).toBe('3xyz');
+
     await secretsAfterRestart.deleteSecret('openai');
     expect(secretsAfterRestart.getSecret('openai')).toBe('');
+    expect(secretsAfterRestart.getSecretMetadata('openai')).toBeNull();
   });
 
   it('should load default server properties and save/load them back after restart', async () => {
