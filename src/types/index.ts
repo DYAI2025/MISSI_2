@@ -68,6 +68,15 @@ export interface Scenario {
   };
 }
 
+export interface ScenarioV2 {
+  id: string;
+  title: string;
+  description: string;
+  originalMarkdown: string;
+  parsedScenario: Scenario;
+  lastSavedAt: string;
+}
+
 export enum EventType {
   SERVER_START = 'server_start',
   SERVER_STOP = 'server_stop',

@@ -1,15 +1,8 @@
-import { Scenario } from '../../types/index.js';
+import { Scenario, ScenarioV2 } from '../../types/index.js';
 
-export interface ScenarioLibraryItem {
-  id: string;
-  title: string;
-  description: string;
-  originalMarkdown: string;
-  parsedScenario: Scenario;
-  lastSavedAt: string;
-}
+export type ScenarioLibraryItem = ScenarioV2;
 
-export function validateScenarioLibraryItem(item: any): ScenarioLibraryItem {
+export function validateScenarioLibraryItem(item: any): ScenarioV2 {
   if (!item || typeof item !== 'object') {
     throw new Error('Invalid scenario library item: must be an object.');
   }

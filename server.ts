@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import { promises as fs } from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { fileURLToPath } from 'url';
 import { MinecraftServerService } from './src/services/MinecraftServerService.js';
@@ -46,12 +47,33 @@ async function startServer() {
   const eventStore = EventStoreService.getInstance();
   const orchestrator = BotOrchestratorService.getInstance();
 
+  // Restore active scenario if set in workspace config
+  const workspaceConfig = settings.getWorkspaceConfig();
+  if (workspaceConfig.activeScenarioId) {
+    const activeSc = scenarioLibrary.getScenario(workspaceConfig.activeScenarioId);
+    if (activeSc) {
+      orchestrator.setActiveScenario(activeSc.parsedScenario);
+      console.log(`[Startup] Restored active scenario: ${activeSc.title} (${workspaceConfig.activeScenarioId})`);
+    }
+  }
+
   // Pipe server service logs into event store service for live monitoring
   serverService.registerLogCallback((log) => {
     eventStore.addEvent(EventType.SYSTEM, log);
   });
 
   // --- API ROUTES ---
+
+  /**
+   * Health check routes
+   */
+  app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  });
+
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'healthy', timestamp: new Date().toISOString() });
+  });
 
   /**
    * Status API
@@ -83,6 +105,38 @@ async function startServer() {
     res.json({
       worldGrid: serverService.getWorldGrid(),
     });
+  });
+
+  /**
+   * Delete the generated world folders
+   */
+  app.delete('/api/server/world', async (req, res) => {
+    try {
+      const serverStatus = serverService.getStatus();
+      if (serverStatus.status !== 'stopped') {
+        return res.status(400).json({ error: 'Server must be stopped to delete the generated world.' });
+      }
+
+      const levelName = serverService.getConfig().levelName || 'world';
+
+      // Prevent path traversal
+      if (!levelName || levelName.includes('..') || levelName.includes('/') || levelName.includes('\\')) {
+        return res.status(400).json({ error: 'Invalid level name.' });
+      }
+
+      const worldDir = path.resolve(process.cwd(), 'minecraft-server', levelName);
+
+      try {
+        await fs.rm(worldDir, { recursive: true, force: true });
+        // Regenerate the visual world grid in simulation
+        serverService.generateProceduralWorld();
+        res.json({ success: true, message: `World folder '${levelName}' deleted successfully.` });
+      } catch (err: any) {
+        res.status(500).json({ error: `Failed to delete world: ${err.message}` });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   /**
@@ -353,6 +407,50 @@ async function startServer() {
   });
 
   /**
+   * Delete specific run manifest and its logs from disk
+   */
+  app.delete('/api/simulation/runs/:id', async (req, res) => {
+    try {
+      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runId = req.params.id;
+      // Prevent path traversal
+      if (!runId || runId.includes('..') || !runId.startsWith('run_')) {
+        return res.status(400).json({ error: 'Invalid run ID.' });
+      }
+
+      const runDir = path.join(runsDir, runId);
+      try {
+        await fs.rm(runDir, { recursive: true, force: true });
+      } catch (e) {}
+
+      const legacyFilepath = path.join(runsDir, `manifest_${runId}.json`);
+      try {
+        await fs.unlink(legacyFilepath);
+      } catch (e) {}
+
+      res.json({ success: true, message: `Run manifest ${runId} deleted successfully.` });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Clear all completed runs and logs
+   */
+  app.delete('/api/simulation/runs', async (req, res) => {
+    try {
+      const runsDir = path.resolve(process.cwd(), 'runs');
+      try {
+        await fs.rm(runsDir, { recursive: true, force: true });
+        await fs.mkdir(runsDir, { recursive: true });
+      } catch (e) {}
+      res.json({ success: true, message: 'All run logs cleared.' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
    * Get Settings Aggregate
    */
   app.get('/api/settings', (req, res) => {
@@ -502,7 +600,7 @@ async function startServer() {
       const updated = await settings.saveWorkspaceConfig(req.body);
       res.json({ success: true, config: updated });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -630,7 +728,7 @@ async function startServer() {
       const saved = await botProfileService.saveProfile(data);
       res.json({ success: true, profile: saved });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -639,7 +737,7 @@ async function startServer() {
       await botProfileService.deleteProfile(req.params.id);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -662,16 +760,10 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    // Serve index.html for all non-API routes (SPA fallback)
-    app.get('*', (req, res) => {
+    app.get(/^\/(?!api).*/, (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
-
-  // Health check endpoint for Railway
-  app.get('/health', (req, res) => {
-    res.json({ status: 'ok' });
-  });
 
   // Start Listener
   app.listen(PORT, '0.0.0.0', () => {
@@ -682,4 +774,3 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('Fatal server boot failure:', err);
 });
-

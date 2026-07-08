@@ -89,3 +89,66 @@ Agents map out the server map coordinates together and exchange research ideas.
 `,
   }
 ];
+
+export const COMPLEX_TEMPLATES = [
+  {
+    title: 'PvP Arena',
+    description: 'Two team leaders and combat bots coordinate resources, equip gear, and simulate a sparring tournament.',
+    markdown: `# Scenario: PvP Arena Tournament
+A highly intense mock combat tournament in a structured arena coordinate zone.
+
+## Objectives
+- Construct a 6x6 combat ring arena
+- Gather 2 Iron Swords
+- Equip 2 Iron Chestplates
+- Initiate mock combat sequence and log state changes
+
+## Bots
+### Bot: GladiatorJax
+- Role: Red Team champion
+- Goal: Move to the combat ring, equip iron chestplate and iron sword, and prepare for mock battle
+- Provider: gemini
+- Model: gemini-3.5-flash
+- Position: 5, 64, 5
+- Inventory: iron_sword: 1, iron_chestplate: 1, cooked_beef: 4
+
+### Bot: GladiatorValk
+- Role: Blue Team champion
+- Goal: Meet Jax in the arena ring, verify equipment, and practice defensive parries
+- Provider: gemini
+- Model: gemini-3.5-flash
+- Position: -5, 64, -5
+- Inventory: iron_sword: 1, iron_chestplate: 1, golden_apple: 1
+`,
+  },
+  {
+    title: 'Large Scale Construction',
+    description: 'A multi-agent grand project involving stone hauling, foundation layering, and battlements construction.',
+    markdown: `# Scenario: Large Scale Castle Construction
+An ambitious cooperative build project involving heavy logistics and architectural layering.
+
+## Objectives
+- Mine 64 Cobblestone blocks
+- Lay down a 8x8 foundation grid
+- Build a 3-block high defensive wall structure
+- Install 4 wooden doors and 2 ladders
+
+## Bots
+### Bot: ForemanFred
+- Role: Chief builder and architect
+- Goal: Direct workers, inspect cobblestone foundation layers, and construct the castle walls
+- Provider: gemini
+- Model: gemini-3.5-flash
+- Position: 10, 64, 10
+- Inventory: stone_pickaxe: 1, ladder: 4, oak_door: 4
+
+### Bot: HaulerHarry
+- Role: Logistics supplier
+- Goal: Mines stone from quarry sites, moves wood, and delivers construction materials to ForemanFred
+- Provider: gemini
+- Model: gemini-3.5-flash
+- Position: -10, 64, -10
+- Inventory: iron_pickaxe: 1, cobblestone: 32, oak_log: 16
+`,
+  }
+];

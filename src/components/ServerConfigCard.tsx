@@ -39,6 +39,33 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [useEmulator, setUseEmulator] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
+  const [isDeletingWorld, setIsDeletingWorld] = useState(false);
+  const [worldDeleteMessage, setWorldDeleteMessage] = useState<string | null>(null);
+
+  const handleDeleteWorld = async () => {
+    const levelName = config.levelName || 'world';
+    if (!window.confirm(`Are you sure you want to permanently delete the generated world folder '${levelName}'? This action cannot be undone.`)) {
+      return;
+    }
+
+    setIsDeletingWorld(true);
+    setWorldDeleteMessage(null);
+    try {
+      const res = await fetch('/api/server/world', { method: 'DELETE' });
+      if (res.ok) {
+        const data = await res.json();
+        setWorldDeleteMessage(`SUCCESS: ${data.message}`);
+      } else {
+        const data = await res.json();
+        setWorldDeleteMessage(`ERROR: ${data.error || 'Failed to delete world.'}`);
+      }
+    } catch (err: any) {
+      setWorldDeleteMessage(`ERROR: ${err.message || 'Network error deleting world.'}`);
+    } finally {
+      setIsDeletingWorld(false);
+    }
+  };
+
   // Synchronize config prop with local editing states
   useEffect(() => {
     setServerName(config.serverName);
@@ -518,6 +545,26 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
               * Sandbox Emulator is locked (Requires <strong className="text-orange-400">ALLOW_SIMULATION_MODE=true</strong> in environment)
             </div>
           )}
+
+          <div className="pt-3 border-t border-brand-border flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={handleDeleteWorld}
+              disabled={isDeletingWorld}
+              className="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded-none bg-red-950/20 text-red-400 border border-red-900/50 hover:bg-red-950/40 hover:text-red-300 font-mono font-bold text-[10px] uppercase transition-all disabled:opacity-50"
+            >
+              Delete Generated World Folder
+            </button>
+            {worldDeleteMessage && (
+              <div className={`p-2 text-[9px] font-mono border ${
+                worldDeleteMessage.startsWith('SUCCESS')
+                  ? 'bg-brand-green/10 text-brand-green border-brand-green/30'
+                  : 'bg-red-950/40 text-red-400 border-red-500/30'
+              }`}>
+                {worldDeleteMessage}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

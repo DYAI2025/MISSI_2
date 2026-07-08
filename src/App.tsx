@@ -32,7 +32,23 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'monitor' | 'map' | 'history'>('monitor');
   const [isLoading, setIsLoading] = useState(true);
   const [allowSimulationMode, setAllowSimulationMode] = useState(false);
-  const [scenarioMarkdown, setScenarioMarkdown] = useState(DEFAULT_SCENARIOS[0].markdown);
+  const [scenarioMarkdown, setScenarioMarkdown] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('missi_scenario_markdown');
+      return saved !== null ? saved : DEFAULT_SCENARIOS[0].markdown;
+    } catch (e) {
+      return DEFAULT_SCENARIOS[0].markdown;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('missi_scenario_markdown', scenarioMarkdown);
+    } catch (e) {
+      console.warn('Failed to save scenario markdown to localStorage:', e);
+    }
+  }, [scenarioMarkdown]);
+
   const [libraryReloadTrigger, setLibraryReloadTrigger] = useState(0);
 
   // Poll server state every 2 seconds to keep dashboard fully live
@@ -476,6 +492,7 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
               <WorldGridVisualizer
                 worldGrid={state.worldGrid}
                 bots={state.bots}
+                logs={state.logs}
               />
             )}
 
