@@ -502,7 +502,7 @@ async function startServer() {
       const updated = await settings.saveWorkspaceConfig(req.body);
       res.json({ success: true, config: updated });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -630,7 +630,7 @@ async function startServer() {
       const saved = await botProfileService.saveProfile(data);
       res.json({ success: true, profile: saved });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -639,7 +639,7 @@ async function startServer() {
       await botProfileService.deleteProfile(req.params.id);
       res.json({ success: true });
     } catch (err: any) {
-      res.status(400).json({ error: err.message });
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -662,10 +662,16 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
+    // Serve index.html for all non-API routes (SPA fallback)
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  // Health check endpoint for Railway
+  app.get('/health', (req, res) => {
+    res.json({ status: 'ok' });
+  });
 
   // Start Listener
   app.listen(PORT, '0.0.0.0', () => {
@@ -676,3 +682,4 @@ async function startServer() {
 startServer().catch((err) => {
   console.error('Fatal server boot failure:', err);
 });
+
