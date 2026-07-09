@@ -177,13 +177,15 @@ async function startServer() {
    * Provider connectivity smoke test (Legacy and new routes)
    */
   app.post('/api/providers/:id/test', async (req, res) => {
+    const { id } = req.params;
     try {
-      const { id } = req.params;
       const { type, apiKey, customUrl, defaultModel } = req.body;
       
       const providerType = type || settings.getProviders().find(p => p.id === id)?.type;
       if (!providerType) {
-        return res.status(400).json({ error: 'Provider type is required for verification test.' });
+        const errMsg = 'Provider type is required for verification test.';
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_type' });
+        return res.status(400).json({ success: false, error: errMsg, code: 'missing_type', timestamp: new Date().toISOString() });
       }
 
       let effectiveApiKey = apiKey;
@@ -203,7 +205,9 @@ async function startServer() {
       }
 
       if (!effectiveApiKey && providerType !== 'ollama' && providerType !== 'lmstudio') {
-        return res.status(400).json({ error: 'missing_key', message: 'API key is missing or not configured.' });
+        const errMsg = 'API key is missing or not configured.';
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
+        return res.status(400).json({ success: false, error: errMsg, code: 'missing_key', timestamp: new Date().toISOString() });
       }
 
       const storedProvider = settings.getProviders().find(p => p.id === id);
@@ -220,17 +224,20 @@ async function startServer() {
       };
 
       const result = await LLMProviderService.testConnection(config);
-      res.json(result);
+      await settings.updateProviderLastTest(id, { success: true, message: result.message });
+      res.json({ success: true, message: result.message, timestamp: new Date().toISOString() });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const errMsg = err.message || String(err);
+      await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'test_failed' });
+      res.status(200).json({ success: false, error: errMsg, code: 'test_failed', timestamp: new Date().toISOString() });
     }
   });
 
   app.post('/api/provider/test', async (req, res) => {
+    const { id, type, apiKey, customUrl, defaultModel } = req.body;
     try {
-      const { id, type, apiKey, customUrl, defaultModel } = req.body;
       if (!id || !type) {
-        return res.status(400).json({ error: 'Provider ID and Type are required for verification test.' });
+        return res.status(400).json({ success: false, error: 'Provider ID and Type are required for verification test.', code: 'missing_params', timestamp: new Date().toISOString() });
       }
 
       let effectiveApiKey = apiKey;
@@ -250,7 +257,9 @@ async function startServer() {
       }
 
       if (!effectiveApiKey && type !== 'ollama' && type !== 'lmstudio') {
-        return res.status(400).json({ error: 'missing_key', message: 'API key is missing or not configured.' });
+        const errMsg = 'API key is missing or not configured.';
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
+        return res.status(400).json({ success: false, error: errMsg, code: 'missing_key', timestamp: new Date().toISOString() });
       }
 
       const storedProvider = settings.getProviders().find(p => p.id === id);
@@ -267,9 +276,14 @@ async function startServer() {
       };
 
       const result = await LLMProviderService.testConnection(config);
-      res.json(result);
+      await settings.updateProviderLastTest(id, { success: true, message: result.message });
+      res.json({ success: true, message: result.message, timestamp: new Date().toISOString() });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      const errMsg = err.message || String(err);
+      if (id) {
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'test_failed' });
+      }
+      res.status(200).json({ success: false, error: errMsg, code: 'test_failed', timestamp: new Date().toISOString() });
     }
   });
 
@@ -293,6 +307,22 @@ async function startServer() {
     if (!command) {
       return res.status(400).json({ error: 'Command string is required.' });
     }
+
+    if (process.env.ALLOW_SERVER_COMMAND !== 'true') {
+      return res.status(403).json({
+        error: 'Command execution is disabled on this workspace by default for system security. Set ALLOW_SERVER_COMMAND=true in your environment to enable.'
+      });
+    }
+
+    const sanitized = command.trim();
+    const baseCommand = sanitized.split(' ')[0].toLowerCase();
+    const riskyCommands = ['/op', '/deop', '/stop', '/whitelist', '/ban', '/kick'];
+    if (riskyCommands.includes(baseCommand)) {
+      return res.status(400).json({
+        error: `Command "${baseCommand}" is blocked for system safety. Command execution rejected.`
+      });
+    }
+
     serverService.executeCommand(command);
     res.json({ success: true });
   });

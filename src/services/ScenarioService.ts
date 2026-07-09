@@ -8,9 +8,10 @@ export class ScenarioService {
     const lines = markdown.split('\n');
     let title = 'Default Minecraft Scenario';
     let description = 'A simulation run.';
+    let scenarioPrompt: string | undefined = undefined;
     const objectives: string[] = [];
     const bots: BotConfig[] = [];
-    const worldConfig: { seed?: string; gameMode?: string; difficulty?: string; port?: number } = {};
+    const worldConfig: { seed?: string; gameMode?: string; difficulty?: string; port?: number; levelName?: string; properties?: Record<string, string> } = {};
 
     let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'none' = 'meta';
     let currentBot: Partial<BotConfig> | null = null;
@@ -46,7 +47,9 @@ export class ScenarioService {
 
       // Process section lines
       if (currentSection === 'meta') {
-        if (!line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*')) {
+        if (line.startsWith('- Scenario Prompt:') || line.startsWith('* Scenario Prompt:') || line.startsWith('- ScenarioPrompt:') || line.startsWith('* ScenarioPrompt:') || line.startsWith('- System Prompt:') || line.startsWith('* System Prompt:')) {
+          scenarioPrompt = line.replace(/^[-*]\s*(Scenario\s*Prompt|ScenarioPrompt|System\s*Prompt):\s*/i, '').trim();
+        } else if (!line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*')) {
           description = line;
         }
       } else if (currentSection === 'world_config') {
@@ -59,6 +62,8 @@ export class ScenarioService {
         } else if (line.startsWith('- Port:') || line.startsWith('* Port:')) {
           const p = parseInt(line.replace(/^[-*]\s*Port:\s*/i, '').trim(), 10);
           if (!isNaN(p)) worldConfig.port = p;
+        } else if (line.startsWith('- LevelName:') || line.startsWith('* LevelName:') || line.startsWith('- Level Name:') || line.startsWith('* Level Name:') || line.startsWith('- level-name:') || line.startsWith('* level-name:')) {
+          worldConfig.levelName = line.replace(/^[-*]\s*(LevelName|Level\s*Name|level-name):\s*/i, '').trim();
         }
       } else if (currentSection === 'objectives') {
         const itemMatch = line.match(/^[-*+]\s+(.*)$/) || line.match(/^\d+\.\s+(.*)$/);
@@ -96,6 +101,10 @@ export class ScenarioService {
             currentBot.providerId = line.replace(/^[-*]\s*Provider:\s*/i, '').trim().toLowerCase();
           } else if (line.startsWith('- Model:') || line.startsWith('* Model:')) {
             currentBot.model = line.replace(/^[-*]\s*Model:\s*/i, '').trim();
+          } else if (line.startsWith('- Character Prompt:') || line.startsWith('* Character Prompt:') || line.startsWith('- CharacterPrompt:') || line.startsWith('* CharacterPrompt:')) {
+            currentBot.characterPrompt = line.replace(/^[-*]\s*(Character\s*Prompt|CharacterPrompt):\s*/i, '').trim();
+          } else if (line.startsWith('- Behavior Prompt:') || line.startsWith('* Behavior Prompt:') || line.startsWith('- BehaviorPrompt:') || line.startsWith('* BehaviorPrompt:')) {
+            currentBot.behaviorPrompt = line.replace(/^[-*]\s*(Behavior\s*Prompt|BehaviorPrompt):\s*/i, '').trim();
           } else if (line.startsWith('- Position:') || line.startsWith('* Position:')) {
             const posStr = line.replace(/^[-*]\s*Position:\s*/i, '').trim();
             const coords = posStr.split(',').map(c => parseInt(c.trim(), 10));
@@ -133,6 +142,7 @@ export class ScenarioService {
       description,
       objectives: objectives.length > 0 ? objectives : ['Explore the Minecraft world'],
       bots: bots.length > 0 ? bots : [this.getDefaultBot('LumberjackBob')],
+      scenarioPrompt,
       worldConfig: Object.keys(worldConfig).length > 0 ? worldConfig : undefined,
     };
   }

@@ -19,12 +19,14 @@ export type ScenarioItem = ScenarioV2;
 interface ScenarioCardProps {
   onParseScenario: (markdown: string) => Promise<Scenario | null>;
   onSpawnBots: (scenario: Scenario) => Promise<void>;
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping';
+  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
   activeScenario?: Scenario;
   onApplyWorldConfig?: (config: any) => Promise<void>;
   markdown: string;
   setMarkdown: React.Dispatch<React.SetStateAction<string>>;
   onSaveBotToLibrary?: (bot: any) => Promise<void>;
+  activeScenarioId?: string;
+  onApplyScenario?: (id: string) => Promise<void>;
 }
 
 export const ScenarioCard: React.FC<ScenarioCardProps> = ({
@@ -36,6 +38,8 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   markdown,
   setMarkdown,
   onSaveBotToLibrary,
+  activeScenarioId,
+  onApplyScenario,
 }) => {
   const [parsedScenario, setParsedScenario] = useState<Scenario | null>(activeScenario || null);
   const [error, setError] = useState<string | null>(null);
@@ -47,12 +51,14 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   const [applySuccess, setApplySuccess] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sprint 3 additions: Saved Library, Status, and Apply states
+  // Sprint 4 additions: Saved Library, Status, and Apply states
   const [activeSubTab, setActiveSubTab] = useState<'editor' | 'library'>('editor');
   const [savedScenarios, setSavedScenarios] = useState<ScenarioItem[]>([]);
   const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null);
   const [lastSavedMarkdown, setLastSavedMarkdown] = useState<string>(markdown);
   const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string | null>(null);
+  const [saveFailed, setSaveFailed] = useState<boolean>(false);
   const [appliedId, setAppliedId] = useState<string | null>(null);
 
   // Fetch all saved scenarios
@@ -72,23 +78,18 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
     fetchSavedScenarios();
   }, []);
 
-  // Check if active workspace scenario matches any in library on load
+  // Sync active scenario ID on load/change
   useEffect(() => {
-    if (activeScenario && savedScenarios.length > 0) {
-      const match = savedScenarios.find(s => s.parsedScenario.title === activeScenario.title);
-      if (match) {
-        if (!currentScenarioId) {
-          setCurrentScenarioId(match.id);
-          // Auto-load matching scenario if currently displaying default preset or empty
-          if (markdown === DEFAULT_SCENARIOS[0].markdown || markdown === '') {
-            setMarkdown(match.originalMarkdown);
-            setLastSavedMarkdown(match.originalMarkdown);
-            setParsedScenario(match.parsedScenario);
-          }
-        }
+    if (activeScenarioId) {
+      setCurrentScenarioId(activeScenarioId);
+      const matched = savedScenarios.find(s => s.id === activeScenarioId);
+      if (matched) {
+        setMarkdown(matched.originalMarkdown);
+        setLastSavedMarkdown(matched.originalMarkdown);
+        setParsedScenario(matched.parsedScenario);
       }
     }
-  }, [activeScenario, savedScenarios]);
+  }, [activeScenarioId, savedScenarios]);
 
   // Handle parsing markdown content
   const handleParseScenario = async (content: string) => {
@@ -108,22 +109,23 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   };
 
   // Save/Update Scenario in database
-  const handleSaveScenario = async () => {
+  const handleSaveScenario = async (forceNew: boolean = false) => {
     setError(null);
     setIsSaving(true);
+    setSaveFailed(false);
     try {
       const scenario = await onParseScenario(markdown);
       if (!scenario) {
         throw new Error('Could not parse scenario details. Please fix parser errors first.');
       }
 
-      // Generate clean ID from title if not established
-      const idToSave = currentScenarioId || scenario.title.toLowerCase().replace(/[^a-z0-9_-]/g, '') || `scenario_${Date.now()}`;
+      const activeId = forceNew ? null : currentScenarioId;
+      const idToSave = activeId || scenario.title.toLowerCase().replace(/[^a-z0-9_-]/g, '') || `scenario_${Date.now()}`;
       
-      const url = currentScenarioId ? `/api/scenarios/${currentScenarioId}` : '/api/scenarios';
-      const method = currentScenarioId ? 'PUT' : 'POST';
+      const url = activeId ? `/api/scenarios/${activeId}` : '/api/scenarios';
+      const method = activeId ? 'PUT' : 'POST';
 
-      const body = currentScenarioId
+      const body = activeId
         ? {
             title: scenario.title,
             description: scenario.description,
@@ -155,9 +157,12 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
       setCurrentScenarioId(savedItem.id);
       setLastSavedMarkdown(markdown);
       setParsedScenario(scenario);
+      setLastSavedAt(new Date().toLocaleTimeString());
+      setSaveFailed(false);
       await fetchSavedScenarios();
     } catch (err: any) {
       setError(err.message || 'Failed to save scenario.');
+      setSaveFailed(true);
     } finally {
       setIsSaving(false);
     }
@@ -167,15 +172,20 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
   const handleApplyScenario = async (id: string) => {
     try {
       setError(null);
-      const res = await fetch(`/api/scenarios/${id}/apply`, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const errData = await res.json();
-        throw new Error(errData.error || 'Failed to apply scenario.');
+      if (onApplyScenario) {
+        await onApplyScenario(id);
+      } else {
+        const res = await fetch(`/api/scenarios/${id}/apply`, {
+          method: 'POST',
+        });
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || 'Failed to apply scenario.');
+        }
       }
       setAppliedId(id);
       setTimeout(() => setAppliedId(null), 3000);
+      await fetchSavedScenarios();
     } catch (err: any) {
       setError(err.message || 'Failed to apply scenario.');
     }
@@ -198,6 +208,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
       }
       if (currentScenarioId === id) {
         setCurrentScenarioId(null);
+        setLastSavedMarkdown('');
       }
       await fetchSavedScenarios();
     } catch (err: any) {
@@ -307,7 +318,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
 
   // Compute state indicators dynamically
   const isDirty = markdown !== lastSavedMarkdown;
-  const currentStatus = isSaving ? 'saving' : (isDirty ? 'dirty' : 'saved');
+  const currentStatus = isSaving ? 'saving' : (saveFailed ? 'failed' : (isDirty ? 'dirty' : 'saved'));
 
   return (
     <div id="scenario-card" className="bg-brand-aside border border-brand-border rounded-none p-4 shadow-none flex flex-col h-full">
@@ -411,22 +422,34 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
 
                 <div className="flex items-center justify-between">
                   <label className="block text-[9px] text-brand-muted uppercase font-mono italic">Scenario Markdown Source</label>
-                  {/* Status indicator */}
-                  {currentStatus === 'saved' && (
-                    <span className="inline-flex items-center gap-1 text-[8px] text-brand-green font-mono uppercase bg-brand-green/10 border border-brand-green/20 px-1.5 py-0.5 font-bold">
-                      ● Saved
-                    </span>
-                  )}
-                  {currentStatus === 'saving' && (
-                    <span className="inline-flex items-center gap-1 text-[8px] text-yellow-500 font-mono uppercase bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 font-bold animate-pulse">
-                      ● Saving...
-                    </span>
-                  )}
-                  {currentStatus === 'dirty' && (
-                    <span className="inline-flex items-center gap-1 text-[8px] text-red-500 font-mono uppercase bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 font-bold">
-                      ● Unsaved Changes
-                    </span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {currentScenarioId === activeScenarioId && (
+                      <span className="inline-flex items-center gap-1 text-[8px] text-brand-green font-mono uppercase bg-brand-green/20 border border-brand-green/40 px-1.5 py-0.5 font-bold">
+                        [Active Workspace Scenario]
+                      </span>
+                    )}
+                    {/* Status indicator */}
+                    {currentStatus === 'saved' && (
+                      <span className="inline-flex items-center gap-1 text-[8px] text-brand-green font-mono uppercase bg-brand-green/10 border border-brand-green/20 px-1.5 py-0.5 font-bold">
+                        ● Saved {lastSavedAt ? `(${lastSavedAt})` : ''}
+                      </span>
+                    )}
+                    {currentStatus === 'saving' && (
+                      <span className="inline-flex items-center gap-1 text-[8px] text-yellow-500 font-mono uppercase bg-yellow-500/10 border border-yellow-500/20 px-1.5 py-0.5 font-bold animate-pulse">
+                        ● Saving...
+                      </span>
+                    )}
+                    {currentStatus === 'failed' && (
+                      <span className="inline-flex items-center gap-1 text-[8px] text-red-500 font-mono uppercase bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 font-bold">
+                        ● Save Failed
+                      </span>
+                    )}
+                    {currentStatus === 'dirty' && (
+                      <span className="inline-flex items-center gap-1 text-[8px] text-orange-500 font-mono uppercase bg-orange-500/10 border border-orange-500/20 px-1.5 py-0.5 font-bold">
+                        ● Unsaved Changes
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div 
                   onClick={() => fileInputRef.current?.click()}
@@ -469,20 +492,43 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                   {currentScenarioId ? `Active ID: ${currentScenarioId}` : 'New Unsaved Scenario'}
                 </span>
                 <div className="flex gap-2">
-                  <button
-                    onClick={handleSaveScenario}
-                    disabled={isSaving || isParsing}
-                    className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-green/10 text-brand-green border border-brand-green/30 hover:bg-brand-green/20 transition-colors disabled:opacity-50 cursor-pointer"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    {isSaving ? 'Saving...' : 'Save Scenario'}
-                  </button>
+                  {currentScenarioId ? (
+                    <>
+                      <button
+                        onClick={() => handleSaveScenario(false)}
+                        disabled={isSaving || isParsing}
+                        className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-green/10 text-brand-green border border-brand-green/30 hover:bg-brand-green/20 transition-colors disabled:opacity-50 cursor-pointer"
+                        title="Save changes to current scenario"
+                      >
+                        <Save className="w-3.5 h-3.5" />
+                        {isSaving ? 'Saving...' : 'Update Current'}
+                      </button>
+                      <button
+                        onClick={() => handleSaveScenario(true)}
+                        disabled={isSaving || isParsing}
+                        className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors disabled:opacity-50 cursor-pointer"
+                        title="Save as a new scenario copy"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-brand-green" />
+                        Save as New
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => handleSaveScenario(false)}
+                      disabled={isSaving || isParsing}
+                      className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-green/10 text-brand-green border border-brand-green/30 hover:bg-brand-green/20 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      {isSaving ? 'Saving...' : 'Save Scenario'}
+                    </button>
+                  )}
                   <button
                     onClick={() => handleParseScenario(markdown)}
                     disabled={isParsing || isSaving}
                     className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    <Sparkles className="w-3.5 h-3.5 text-brand-green" />
+                    <Sparkles className="w-3.5 h-3.5 text-brand-muted" />
                     {isParsing ? 'Parsing...' : 'Parse Source'}
                   </button>
                 </div>

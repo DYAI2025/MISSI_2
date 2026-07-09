@@ -6,7 +6,8 @@ import { ProvidersCard } from './components/ProvidersCard.tsx';
 import { LiveMonitor } from './components/LiveMonitor.tsx';
 import { WorldGridVisualizer } from './components/WorldGridVisualizer.tsx';
 import { RunHistory } from './components/RunHistory.tsx';
-import { SimulationState, Scenario, BotConfig, EventLog, LLMProviderConfig, LLMProviderType } from './types/index.ts';
+import { SetupReadinessPanel } from './components/SetupReadinessPanel.tsx';
+import { SimulationState, Scenario, BotConfig, EventLog, LLMProviderConfig, LLMProviderType, WorkspaceConfig } from './types/index.ts';
 import { DEFAULT_SCENARIOS } from './data/scenarios.ts';
 import { ShieldCheck, Server, Play, History, Compass, Info, Cpu, Layers } from 'lucide-react';
 
@@ -29,6 +30,8 @@ export default function App() {
   });
 
   const [providers, setProviders] = useState<(LLMProviderConfig & { isConfigured: boolean })[]>([]);
+  const [workspace, setWorkspace] = useState<WorkspaceConfig | null>(null);
+  const [botProfiles, setBotProfiles] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState<'monitor' | 'map' | 'history'>('monitor');
   const [isLoading, setIsLoading] = useState(true);
   const [allowSimulationMode, setAllowSimulationMode] = useState(false);
@@ -92,6 +95,57 @@ export default function App() {
     }
   };
 
+  const reloadWorkspace = async () => {
+    try {
+      const res = await fetch('/api/settings/workspace');
+      if (res.ok) {
+        const data = await res.json();
+        setWorkspace(data.config);
+      }
+    } catch (err) {
+      console.warn('Failed to reload workspace config:', err);
+    }
+  };
+
+  const handleApplyScenario = async (id: string) => {
+    const res = await fetch(`/api/scenarios/${id}/apply`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to apply scenario.');
+    }
+    await reloadWorkspace();
+    await pollStatus();
+  };
+
+  const handleSaveWorkspace = async (newConfig: Partial<WorkspaceConfig>) => {
+    const res = await fetch('/api/settings/workspace', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to save workspace config.');
+    }
+    const data = await res.json();
+    setWorkspace(data.config);
+  };
+
+  const handleTriggerTestProvider = async (providerId: string) => {
+    const res = await fetch(`/api/providers/${providerId}/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Test failed.');
+    }
+    await fetchProviders();
+  };
+
   useEffect(() => {
     const init = async () => {
       setIsLoading(true);
@@ -108,6 +162,12 @@ export default function App() {
               serverConfig: settingsData.serverConfig
             }));
           }
+          if (settingsData.workspace) {
+            setWorkspace(settingsData.workspace);
+          }
+          if (settingsData.botProfiles) {
+            setBotProfiles(settingsData.botProfiles);
+          }
         }
       } catch (err) {
         console.warn('Failed to hydrate initial settings:', err);
@@ -119,7 +179,7 @@ export default function App() {
 
     const interval = setInterval(pollStatus, 2500);
     return () => clearInterval(interval);
-  }, []);
+  }, [libraryReloadTrigger]);
 
   // --- ACTIONS HANDLERS ---
 
@@ -257,10 +317,15 @@ export default function App() {
     customUrl?: string;
     defaultModel?: string;
   }) => {
-    const res = await fetch('/api/provider/update', {
-      method: 'POST',
+    const res = await fetch(`/api/providers/${config.id}`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(config),
+      body: JSON.stringify({
+        type: config.type,
+        apiKey: config.apiKey,
+        customUrl: config.customUrl,
+        defaultModel: config.defaultModel,
+      }),
     });
     if (!res.ok) {
       throw new Error('Failed to update provider keys.');
@@ -414,6 +479,17 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
             allowSimulationMode={allowSimulationMode}
           />
 
+          <SetupReadinessPanel
+            workspace={workspace}
+            providers={providers}
+            botProfiles={botProfiles}
+            serverStatus={state.serverStatus}
+            runtimeMode={state.runtimeMode}
+            allowSimulationMode={allowSimulationMode}
+            onSaveWorkspace={handleSaveWorkspace}
+            onTriggerTestProvider={handleTriggerTestProvider}
+          />
+
           <ScenarioCard
             onParseScenario={handleParseScenario}
             onSpawnBots={handleSpawnBots}
@@ -423,6 +499,8 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
             markdown={scenarioMarkdown}
             setMarkdown={setScenarioMarkdown}
             onSaveBotToLibrary={handleSaveBotToLibrary}
+            activeScenarioId={workspace?.activeScenarioId}
+            onApplyScenario={handleApplyScenario}
           />
 
           <BotProfileLibrary

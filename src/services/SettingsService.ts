@@ -1,14 +1,8 @@
-import { MinecraftServerConfig, LLMProviderConfig, LLMProviderType } from '../types/index.js';
+import { MinecraftServerConfig, LLMProviderConfig, LLMProviderType, WorkspaceConfig } from '../types/index.js';
 import { PersistenceService } from './PersistenceService.js';
 import { validateMinecraftServerConfig } from '../domain/settings/settings.schema.ts';
 import { validateLLMProviderConfig } from '../domain/providers/provider.schema.ts';
 import { SecretStoreService } from './SecretStoreService.js';
-
-export interface WorkspaceConfig {
-  activeScenarioId?: string;
-  defaultProviderId?: string;
-  intervalMs?: number;
-}
 
 export class SettingsService {
   private static instance: SettingsService | null = null;
@@ -116,7 +110,10 @@ export class SettingsService {
       if (p && p.id) {
         try {
           const validated = validateLLMProviderConfig({ ...p, apiKey: '' });
-          providersMap.set(validated.id, validated);
+          providersMap.set(validated.id, {
+            ...validated,
+            lastTest: p.lastTest,
+          } as any);
         } catch (err) {
           console.error(`Skipping invalid loaded provider config:`, err);
         }
@@ -217,10 +214,37 @@ export class SettingsService {
       name: p.name,
       customUrl: p.customUrl,
       defaultModel: p.defaultModel,
+      lastTest: (p as any).lastTest,
     }));
     await this.persistence.writeJson(this.providersConfigPath, publicList);
 
     return validated;
+  }
+
+  public async updateProviderLastTest(
+    providerId: string,
+    result: { success: boolean; message: string; error?: string; code?: string }
+  ): Promise<void> {
+    const p = this.cachedProviders.find(prov => prov.id === providerId);
+    if (p) {
+      (p as any).lastTest = {
+        status: result.success ? 'success' : 'failed',
+        timestamp: new Date().toISOString(),
+        error: result.error,
+        code: result.code,
+        message: result.message,
+      };
+
+      const publicList = this.cachedProviders.map(p => ({
+        id: p.id,
+        type: p.type,
+        name: p.name,
+        customUrl: p.customUrl,
+        defaultModel: p.defaultModel,
+        lastTest: (p as any).lastTest,
+      }));
+      await this.persistence.writeJson(this.providersConfigPath, publicList);
+    }
   }
 
   public async deleteProviderSecret(providerId: string): Promise<void> {

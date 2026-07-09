@@ -53,6 +53,8 @@ export interface BotConfig {
   z: number;
   health: number;
   food: number;
+  characterPrompt?: string;
+  behaviorPrompt?: string;
 }
 
 export interface Scenario {
@@ -60,11 +62,14 @@ export interface Scenario {
   description: string;
   objectives: string[];
   bots: BotConfig[];
+  scenarioPrompt?: string;
   worldConfig?: {
     seed?: string;
     gameMode?: string;
     difficulty?: string;
     port?: number;
+    levelName?: string;
+    properties?: Record<string, string>;
   };
 }
 
@@ -125,4 +130,13 @@ export interface SimulationState {
   logs: EventLog[];
   worldGrid: WorldBlock[];
   activeScenario?: Scenario;
+}
+
+export interface WorkspaceConfig {
+  activeScenarioId?: string;
+  selectedBotProfileIds?: string[];
+  defaultProviderId?: string;
+  activeProviderId?: string;
+  intervalMs?: number;
+  lastAppliedAt?: string;
 }
