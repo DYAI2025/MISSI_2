@@ -38,6 +38,12 @@ export interface LLMProviderConfig {
   apiKey: string; // Stored in memory / session on backend
   customUrl?: string; // For Ollama / LMStudio / OpenRouter custom endpoints
   defaultModel: string;
+  lastTest?: {
+    status: 'untested' | 'passed' | 'failed';
+    testedAt?: string;
+    errorCode?: string;
+    message?: string;
+  };
 }
 
 export interface BotConfig {
@@ -54,21 +60,28 @@ export interface BotConfig {
   health: number;
   food: number;
   characterPrompt?: string;
+  character_prompt?: string;
   behaviorPrompt?: string;
+  behavior_prompt?: string;
 }
 
 export interface Scenario {
+  id?: string;
+  version?: string;
   title: string;
   description: string;
   objectives: string[];
   bots: BotConfig[];
   scenarioPrompt?: string;
+  scenario_prompt?: string;
   worldConfig?: {
     seed?: string;
     gameMode?: string;
+    game_mode?: string;
     difficulty?: string;
     port?: number;
     levelName?: string;
+    level_name?: string;
     properties?: Record<string, string>;
   };
 }

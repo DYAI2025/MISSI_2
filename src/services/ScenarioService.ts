@@ -8,12 +8,14 @@ export class ScenarioService {
     const lines = markdown.split('\n');
     let title = 'Default Minecraft Scenario';
     let description = 'A simulation run.';
+    let version: string | undefined = undefined;
     let scenarioPrompt: string | undefined = undefined;
+    let scenarioPromptLines: string[] = [];
     const objectives: string[] = [];
     const bots: BotConfig[] = [];
-    const worldConfig: { seed?: string; gameMode?: string; difficulty?: string; port?: number; levelName?: string; properties?: Record<string, string> } = {};
+    const worldConfig: { seed?: string; gameMode?: string; game_mode?: string; difficulty?: string; port?: number; levelName?: string; level_name?: string; properties?: Record<string, string> } = {};
 
-    let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'none' = 'meta';
+    let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'scenario_prompt' | 'none' = 'meta';
     let currentBot: Partial<BotConfig> | null = null;
 
     for (let i = 0; i < lines.length; i++) {
@@ -27,6 +29,11 @@ export class ScenarioService {
           title = scenarioMatch[2].trim();
         }
         currentSection = 'meta';
+        continue;
+      }
+
+      if (line.match(/^##\s*(Scenario\s*Prompt|ScenarioPrompt|System\s*Prompt)/i)) {
+        currentSection = 'scenario_prompt';
         continue;
       }
 
@@ -46,24 +53,43 @@ export class ScenarioService {
       }
 
       // Process section lines
+      if (currentSection === 'scenario_prompt') {
+        scenarioPromptLines.push(lines[i]);
+        continue;
+      }
+
       if (currentSection === 'meta') {
-        if (line.startsWith('- Scenario Prompt:') || line.startsWith('* Scenario Prompt:') || line.startsWith('- ScenarioPrompt:') || line.startsWith('* ScenarioPrompt:') || line.startsWith('- System Prompt:') || line.startsWith('* System Prompt:')) {
-          scenarioPrompt = line.replace(/^[-*]\s*(Scenario\s*Prompt|ScenarioPrompt|System\s*Prompt):\s*/i, '').trim();
+        const vMatch = line.match(/^[-*+=\d.]*\s*Version\s*[:=]\s*(.*)$/i);
+        const pMatch = line.match(/^[-*+=\d.]*\s*(Scenario\s*Prompt|ScenarioPrompt|System\s*Prompt)\s*[:=]\s*(.*)$/i);
+        if (vMatch) {
+          version = vMatch[1].trim();
+        } else if (pMatch) {
+          scenarioPrompt = pMatch[2].trim();
         } else if (!line.startsWith('#') && !line.startsWith('-') && !line.startsWith('*')) {
           description = line;
         }
       } else if (currentSection === 'world_config') {
-        if (line.startsWith('- Seed:') || line.startsWith('* Seed:')) {
-          worldConfig.seed = line.replace(/^[-*]\s*Seed:\s*/i, '').trim();
-        } else if (line.startsWith('- GameMode:') || line.startsWith('* GameMode:')) {
-          worldConfig.gameMode = line.replace(/^[-*]\s*GameMode:\s*/i, '').trim().toLowerCase();
-        } else if (line.startsWith('- Difficulty:') || line.startsWith('* Difficulty:')) {
-          worldConfig.difficulty = line.replace(/^[-*]\s*Difficulty:\s*/i, '').trim().toLowerCase();
-        } else if (line.startsWith('- Port:') || line.startsWith('* Port:')) {
-          const p = parseInt(line.replace(/^[-*]\s*Port:\s*/i, '').trim(), 10);
+        const seedMatch = line.match(/^[-*+=\d.]*\s*Seed\s*[:=]\s*(.*)$/i);
+        const gameModeMatch = line.match(/^[-*+=\d.]*\s*(Game\s*Mode|GameMode|game_mode)\s*[:=]\s*(.*)$/i);
+        const difficultyMatch = line.match(/^[-*+=\d.]*\s*Difficulty\s*[:=]\s*(.*)$/i);
+        const portMatch = line.match(/^[-*+=\d.]*\s*Port\s*[:=]\s*(.*)$/i);
+        const levelNameMatch = line.match(/^[-*+=\d.]*\s*(LevelName|Level\s*Name|level_name|level-name)\s*[:=]\s*(.*)$/i);
+
+        if (seedMatch) {
+          worldConfig.seed = seedMatch[1].trim();
+        } else if (gameModeMatch) {
+          const gm = gameModeMatch[2].trim().toLowerCase();
+          worldConfig.gameMode = gm;
+          worldConfig.game_mode = gm;
+        } else if (difficultyMatch) {
+          worldConfig.difficulty = difficultyMatch[1].trim().toLowerCase();
+        } else if (portMatch) {
+          const p = parseInt(portMatch[1].trim(), 10);
           if (!isNaN(p)) worldConfig.port = p;
-        } else if (line.startsWith('- LevelName:') || line.startsWith('* LevelName:') || line.startsWith('- Level Name:') || line.startsWith('* Level Name:') || line.startsWith('- level-name:') || line.startsWith('* level-name:')) {
-          worldConfig.levelName = line.replace(/^[-*]\s*(LevelName|Level\s*Name|level-name):\s*/i, '').trim();
+        } else if (levelNameMatch) {
+          const ln = levelNameMatch[2].trim();
+          worldConfig.levelName = ln;
+          worldConfig.level_name = ln;
         }
       } else if (currentSection === 'objectives') {
         const itemMatch = line.match(/^[-*+]\s+(.*)$/) || line.match(/^\d+\.\s+(.*)$/);
@@ -74,7 +100,7 @@ export class ScenarioService {
         // Checking for a new bot header
         if (line.startsWith('### Bot:') || line.startsWith('### Agent:') || line.startsWith('### ')) {
           if (currentBot && currentBot.name) {
-            bots.push(this.finalizeBot(currentBot));
+            bots.push(ScenarioService.finalizeBot(currentBot));
           }
           const name = line.replace(/^###\s*(Bot:|Agent:)?\s*/i, '').trim();
           currentBot = {
@@ -92,29 +118,41 @@ export class ScenarioService {
             food: 20,
           };
         } else if (currentBot) {
-          // Parse bot fields
-          if (line.startsWith('- Role:') || line.startsWith('* Role:')) {
-            currentBot.role = line.replace(/^[-*]\s*Role:\s*/i, '').trim();
-          } else if (line.startsWith('- Goal:') || line.startsWith('* Goal:')) {
-            currentBot.goal = line.replace(/^[-*]\s*Goal:\s*/i, '').trim();
-          } else if (line.startsWith('- Provider:') || line.startsWith('* Provider:')) {
-            currentBot.providerId = line.replace(/^[-*]\s*Provider:\s*/i, '').trim().toLowerCase();
-          } else if (line.startsWith('- Model:') || line.startsWith('* Model:')) {
-            currentBot.model = line.replace(/^[-*]\s*Model:\s*/i, '').trim();
-          } else if (line.startsWith('- Character Prompt:') || line.startsWith('* Character Prompt:') || line.startsWith('- CharacterPrompt:') || line.startsWith('* CharacterPrompt:')) {
-            currentBot.characterPrompt = line.replace(/^[-*]\s*(Character\s*Prompt|CharacterPrompt):\s*/i, '').trim();
-          } else if (line.startsWith('- Behavior Prompt:') || line.startsWith('* Behavior Prompt:') || line.startsWith('- BehaviorPrompt:') || line.startsWith('* BehaviorPrompt:')) {
-            currentBot.behaviorPrompt = line.replace(/^[-*]\s*(Behavior\s*Prompt|BehaviorPrompt):\s*/i, '').trim();
-          } else if (line.startsWith('- Position:') || line.startsWith('* Position:')) {
-            const posStr = line.replace(/^[-*]\s*Position:\s*/i, '').trim();
+          const roleMatch = line.match(/^[-*+=\d.]*\s*Role\s*[:=]\s*(.*)$/i);
+          const goalMatch = line.match(/^[-*+=\d.]*\s*Goal\s*[:=]\s*(.*)$/i);
+          const providerMatch = line.match(/^[-*+=\d.]*\s*Provider\s*[:=]\s*(.*)$/i);
+          const modelMatch = line.match(/^[-*+=\d.]*\s*Model\s*[:=]\s*(.*)$/i);
+          const charPromptMatch = line.match(/^[-*+=\d.]*\s*(Character\s*Prompt|CharacterPrompt|character_prompt)\s*[:=]\s*(.*)$/i);
+          const behPromptMatch = line.match(/^[-*+=\d.]*\s*(Behavior\s*Prompt|BehaviorPrompt|behavior_prompt)\s*[:=]\s*(.*)$/i);
+          const posMatch = line.match(/^[-*+=\d.]*\s*Position\s*[:=]\s*(.*)$/i);
+          const invMatch = line.match(/^[-*+=\d.]*\s*Inventory\s*[:=]\s*(.*)$/i);
+
+          if (roleMatch) {
+            currentBot.role = roleMatch[1].trim();
+          } else if (goalMatch) {
+            currentBot.goal = goalMatch[1].trim();
+          } else if (providerMatch) {
+            currentBot.providerId = providerMatch[1].trim().toLowerCase();
+          } else if (modelMatch) {
+            currentBot.model = modelMatch[1].trim();
+          } else if (charPromptMatch) {
+            const val = charPromptMatch[2].trim();
+            currentBot.characterPrompt = val;
+            currentBot.character_prompt = val;
+          } else if (behPromptMatch) {
+            const val = behPromptMatch[2].trim();
+            currentBot.behaviorPrompt = val;
+            currentBot.behavior_prompt = val;
+          } else if (posMatch) {
+            const posStr = posMatch[1].trim();
             const coords = posStr.split(',').map(c => parseInt(c.trim(), 10));
             if (coords.length >= 3 && coords.every(c => !isNaN(c))) {
               currentBot.x = coords[0];
               currentBot.y = coords[1];
               currentBot.z = coords[2];
             }
-          } else if (line.startsWith('- Inventory:') || line.startsWith('* Inventory:')) {
-            const invStr = line.replace(/^[-*]\s*Inventory:\s*/i, '').trim();
+          } else if (invMatch) {
+            const invStr = invMatch[1].trim();
             const items = invStr.split(',').map(item => item.trim());
             const inv: Record<string, number> = {};
             items.forEach(it => {
@@ -134,20 +172,26 @@ export class ScenarioService {
 
     // Push last bot if exists
     if (currentBot && currentBot.name) {
-      bots.push(this.finalizeBot(currentBot));
+      bots.push(ScenarioService.finalizeBot(currentBot));
     }
+
+    const finalPrompt = scenarioPrompt || (scenarioPromptLines.length > 0 ? scenarioPromptLines.join('\n').trim() : undefined);
 
     return {
       title,
       description,
+      version,
       objectives: objectives.length > 0 ? objectives : ['Explore the Minecraft world'],
       bots: bots.length > 0 ? bots : [this.getDefaultBot('LumberjackBob')],
-      scenarioPrompt,
+      scenarioPrompt: finalPrompt,
+      scenario_prompt: finalPrompt,
       worldConfig: Object.keys(worldConfig).length > 0 ? worldConfig : undefined,
     };
   }
 
   private static finalizeBot(bot: Partial<BotConfig>): BotConfig {
+    const characterPrompt = bot.characterPrompt || bot.character_prompt;
+    const behaviorPrompt = bot.behaviorPrompt || bot.behavior_prompt;
     return {
       id: bot.id || `bot_${Math.random().toString(36).substr(2, 9)}`,
       name: bot.name || 'Minebot',
@@ -161,6 +205,10 @@ export class ScenarioService {
       z: bot.z ?? 0,
       health: bot.health ?? 20,
       food: bot.food ?? 20,
+      characterPrompt,
+      character_prompt: characterPrompt,
+      behaviorPrompt,
+      behavior_prompt: behaviorPrompt,
     };
   }
 

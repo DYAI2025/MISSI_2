@@ -371,4 +371,93 @@ export class LLMProviderService {
       throw new Error(`Connection Test Failed: ${err.message || err}`);
     }
   }
+
+  /**
+   * Classifies provider errors into normalized error codes.
+   */
+  public static classifyError(err: any, provider: LLMProviderConfig): {
+    code:
+      | 'missing_key'
+      | 'invalid_key'
+      | 'unreachable'
+      | 'timeout'
+      | 'rate_limited'
+      | 'invalid_model'
+      | 'invalid_response'
+      | 'parse_error'
+      | 'unknown_provider_error';
+    message: string;
+  } {
+    const msg = (err.message || String(err)).trim();
+    const lower = msg.toLowerCase();
+
+    // 1. Missing API Key
+    if (
+      lower.includes('api key is required') ||
+      lower.includes('key is required') ||
+      lower.includes('missing api key') ||
+      lower.includes('api key is missing') ||
+      (!provider.apiKey && provider.type !== LLMProviderType.OLLAMA && provider.type !== LLMProviderType.LMSTUDIO)
+    ) {
+      return { code: 'missing_key', message: msg };
+    }
+
+    // 2. Unreachable / network
+    if (
+      lower.includes('fetch failed') ||
+      lower.includes('econnrefused') ||
+      lower.includes('enotfound') ||
+      lower.includes('unreachable') ||
+      lower.includes('offline or unreachable') ||
+      lower.includes('network error')
+    ) {
+      return { code: 'unreachable', message: msg };
+    }
+
+    // 3. Timeout
+    if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
+      return { code: 'timeout', message: msg };
+    }
+
+    // 4. Invalid key (401 or 403)
+    if (
+      lower.includes('401') ||
+      lower.includes('403') ||
+      lower.includes('unauthorized') ||
+      lower.includes('forbidden') ||
+      lower.includes('invalid api key') ||
+      lower.includes('invalid_api_key') ||
+      lower.includes('key is invalid')
+    ) {
+      return { code: 'invalid_key', message: msg };
+    }
+
+    // 5. Rate limited (429)
+    if (
+      lower.includes('429') ||
+      lower.includes('too many requests') ||
+      lower.includes('rate limit') ||
+      lower.includes('quota exceeded')
+    ) {
+      return { code: 'rate_limited', message: msg };
+    }
+
+    // 6. Invalid Model
+    if (
+      lower.includes('model not found') ||
+      lower.includes('invalid_model') ||
+      lower.includes('unsupported model') ||
+      (lower.includes('not found') && lower.includes('model'))
+    ) {
+      return { code: 'invalid_model', message: msg };
+    }
+
+    // 7. Parse error or invalid response
+    if (lower.includes('json') || lower.includes('unexpected response') || lower.includes('parse')) {
+      return { code: 'parse_error', message: msg };
+    }
+
+    // 8. Default
+    return { code: 'unknown_provider_error', message: msg };
+  }
 }

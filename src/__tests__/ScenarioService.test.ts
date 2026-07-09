@@ -56,6 +56,50 @@ A deep wilderness survival test for Mineflayer bots.
     expect(bob.inventory).toEqual({ stone_axe: 1, bread: 5 });
   });
 
+  it('should parse ScenarioV2 advanced elements like Scenario Prompt, Character/Behavior prompts, and Game Mode', () => {
+    const md = `
+# Scenario: Sandbox Forest Test
+Version: 1.2.0
+
+A custom forest survival workspace setup.
+
+## Scenario Prompt
+We are in a simulated forest and bots need to survive and build a wooden house together.
+
+## World Configuration
+- Seed: 12345
+- Game Mode: creative
+- Difficulty: peaceful
+- Level Name: CustomWorld
+
+## Bots
+### Bot: BuilderSteve
+- Role: Constructor
+- Goal: Build a wooden house
+- Provider: gemini
+- Model: gemini-3.5-flash
+- Character Prompt: You are Steve, a silent but hard-working builder.
+- Behavior Prompt: Focus on placing wood blocks carefully.
+- Position: 0, 64, 0
+- Inventory: oak_planks:64
+    `;
+
+    const scenario = ScenarioService.parseMarkdown(md);
+
+    expect(scenario.title).toBe('Sandbox Forest Test');
+    expect(scenario.version).toBe('1.2.0');
+    expect(scenario.scenario_prompt).toContain('survive and build a wooden house');
+    expect(scenario.scenarioPrompt).toContain('survive and build a wooden house');
+    expect(scenario.worldConfig?.gameMode).toBe('creative');
+    expect(scenario.worldConfig?.levelName).toBe('CustomWorld');
+
+    expect(scenario.bots.length).toBe(1);
+    const steve = scenario.bots[0];
+    expect(steve.name).toBe('BuilderSteve');
+    expect(steve.characterPrompt).toBe('You are Steve, a silent but hard-working builder.');
+    expect(steve.behaviorPrompt).toBe('Focus on placing wood blocks carefully.');
+  });
+
   it('should correctly validate a parsed scenario object', () => {
     const validScenario = {
       title: 'Valid Scenario',

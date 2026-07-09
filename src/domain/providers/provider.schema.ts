@@ -44,6 +44,12 @@ export interface MaskedProviderResponse {
     last4: string;
     updatedAt: string;
   } | null;
+  lastTest?: {
+    status: 'untested' | 'passed' | 'failed';
+    testedAt?: string;
+    errorCode?: string;
+    message?: string;
+  };
 }
 
 export function maskProvider(
@@ -58,5 +64,6 @@ export function maskProvider(
     defaultModel: provider.defaultModel,
     isConfigured: !!(provider.apiKey && provider.apiKey.length > 0),
     secretMetadata: secretMetadata || null,
+    lastTest: provider.lastTest,
   };
 }

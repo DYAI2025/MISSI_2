@@ -105,15 +105,18 @@ export class SettingsService {
     
     // Merge default list and public loaded providers
     const providersMap = new Map<string, LLMProviderConfig>();
-    defaultProviders.forEach(p => providersMap.set(p.id, p));
+    defaultProviders.forEach(p => providersMap.set(p.id, {
+      ...p,
+      lastTest: { status: 'untested' }
+    }));
     loadedProviders.forEach(p => {
       if (p && p.id) {
         try {
           const validated = validateLLMProviderConfig({ ...p, apiKey: '' });
           providersMap.set(validated.id, {
             ...validated,
-            lastTest: p.lastTest,
-          } as any);
+            lastTest: p.lastTest || { status: 'untested' },
+          });
         } catch (err) {
           console.error(`Skipping invalid loaded provider config:`, err);
         }
@@ -202,10 +205,18 @@ export class SettingsService {
     }
 
     if (idx >= 0) {
-      this.cachedProviders[idx] = validated;
+      this.cachedProviders[idx] = {
+        ...validated,
+        lastTest: current.lastTest || { status: 'untested' },
+      };
     } else {
-      this.cachedProviders.push(validated);
+      this.cachedProviders.push({
+        ...validated,
+        lastTest: { status: 'untested' },
+      });
     }
+
+    const finalProvider = idx >= 0 ? this.cachedProviders[idx] : this.cachedProviders[this.cachedProviders.length - 1];
 
     // Save only the public configurations to providers.public.json
     const publicList = this.cachedProviders.map(p => ({
@@ -214,11 +225,11 @@ export class SettingsService {
       name: p.name,
       customUrl: p.customUrl,
       defaultModel: p.defaultModel,
-      lastTest: (p as any).lastTest,
+      lastTest: p.lastTest,
     }));
     await this.persistence.writeJson(this.providersConfigPath, publicList);
 
-    return validated;
+    return finalProvider;
   }
 
   public async updateProviderLastTest(
@@ -227,11 +238,10 @@ export class SettingsService {
   ): Promise<void> {
     const p = this.cachedProviders.find(prov => prov.id === providerId);
     if (p) {
-      (p as any).lastTest = {
-        status: result.success ? 'success' : 'failed',
-        timestamp: new Date().toISOString(),
-        error: result.error,
-        code: result.code,
+      p.lastTest = {
+        status: result.success ? 'passed' : 'failed',
+        testedAt: new Date().toISOString(),
+        errorCode: result.code,
         message: result.message,
       };
 
@@ -241,7 +251,7 @@ export class SettingsService {
         name: p.name,
         customUrl: p.customUrl,
         defaultModel: p.defaultModel,
-        lastTest: (p as any).lastTest,
+        lastTest: p.lastTest,
       }));
       await this.persistence.writeJson(this.providersConfigPath, publicList);
     }

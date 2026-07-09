@@ -178,14 +178,22 @@ async function startServer() {
    */
   app.post('/api/providers/:id/test', async (req, res) => {
     const { id } = req.params;
+    let providerType: string | undefined = undefined;
+    let finalDefaultModel = '';
     try {
       const { type, apiKey, customUrl, defaultModel } = req.body;
       
-      const providerType = type || settings.getProviders().find(p => p.id === id)?.type;
+      providerType = type || settings.getProviders().find(p => p.id === id)?.type;
       if (!providerType) {
         const errMsg = 'Provider type is required for verification test.';
-        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_type' });
-        return res.status(400).json({ success: false, error: errMsg, code: 'missing_type', timestamp: new Date().toISOString() });
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'unknown_provider_error' });
+        return res.status(200).json({
+          success: false,
+          providerId: id,
+          providerType: 'unknown',
+          model: '',
+          error: { code: 'unknown_provider_error', message: errMsg }
+        });
       }
 
       let effectiveApiKey = apiKey;
@@ -204,32 +212,66 @@ async function startServer() {
         }
       }
 
-      if (!effectiveApiKey && providerType !== 'ollama' && providerType !== 'lmstudio') {
-        const errMsg = 'API key is missing or not configured.';
-        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
-        return res.status(400).json({ success: false, error: errMsg, code: 'missing_key', timestamp: new Date().toISOString() });
-      }
-
       const storedProvider = settings.getProviders().find(p => p.id === id);
       const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
-      const finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
+      finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
 
       const config = {
         id,
-        type: providerType,
+        type: providerType as any,
         name: id === 'gemini' ? 'Google Gemini' : id === 'openai' ? 'OpenAI GPT' : id === 'anthropic' ? 'Anthropic Claude' : id === 'openrouter' ? 'OpenRouter' : id === 'ollama' ? 'Ollama' : 'LM Studio',
         apiKey: effectiveApiKey || '',
         customUrl: finalCustomUrl || undefined,
         defaultModel: finalDefaultModel || '',
       };
 
+      if (!effectiveApiKey && providerType !== 'ollama' && providerType !== 'lmstudio') {
+        const errMsg = 'API key is missing or not configured.';
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
+        return res.status(200).json({
+          success: false,
+          providerId: id,
+          providerType,
+          model: finalDefaultModel,
+          error: { code: 'missing_key', message: errMsg }
+        });
+      }
+
+      const start = performance.now();
       const result = await LLMProviderService.testConnection(config);
+      const latencyMs = Math.round(performance.now() - start);
+
       await settings.updateProviderLastTest(id, { success: true, message: result.message });
-      res.json({ success: true, message: result.message, timestamp: new Date().toISOString() });
+      res.json({
+        success: true,
+        providerId: id,
+        providerType,
+        model: finalDefaultModel,
+        latencyMs,
+        timestamp: new Date().toISOString()
+      });
     } catch (err: any) {
       const errMsg = err.message || String(err);
-      await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'test_failed' });
-      res.status(200).json({ success: false, error: errMsg, code: 'test_failed', timestamp: new Date().toISOString() });
+      const configMock = {
+        id,
+        type: (providerType || 'gemini') as any,
+        name: id,
+        apiKey: '',
+        defaultModel: finalDefaultModel
+      };
+      const classified = LLMProviderService.classifyError(err, configMock);
+      await settings.updateProviderLastTest(id, { success: false, message: classified.message, error: classified.message, code: classified.code });
+      res.status(200).json({
+        success: false,
+        providerId: id,
+        providerType: providerType || 'unknown',
+        model: finalDefaultModel,
+        error: {
+          code: classified.code,
+          message: classified.message
+        },
+        timestamp: new Date().toISOString()
+      });
     }
   });
 
@@ -237,7 +279,13 @@ async function startServer() {
     const { id, type, apiKey, customUrl, defaultModel } = req.body;
     try {
       if (!id || !type) {
-        return res.status(400).json({ success: false, error: 'Provider ID and Type are required for verification test.', code: 'missing_params', timestamp: new Date().toISOString() });
+        return res.status(200).json({
+          success: false,
+          providerId: id || 'unknown',
+          providerType: type || 'unknown',
+          model: defaultModel || '',
+          error: { code: 'unknown_provider_error', message: 'Provider ID and Type are required for verification test.' }
+        });
       }
 
       let effectiveApiKey = apiKey;
@@ -256,12 +304,6 @@ async function startServer() {
         }
       }
 
-      if (!effectiveApiKey && type !== 'ollama' && type !== 'lmstudio') {
-        const errMsg = 'API key is missing or not configured.';
-        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
-        return res.status(400).json({ success: false, error: errMsg, code: 'missing_key', timestamp: new Date().toISOString() });
-      }
-
       const storedProvider = settings.getProviders().find(p => p.id === id);
       const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
       const finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
@@ -275,15 +317,55 @@ async function startServer() {
         defaultModel: finalDefaultModel || '',
       };
 
+      if (!effectiveApiKey && type !== 'ollama' && type !== 'lmstudio') {
+        const errMsg = 'API key is missing or not configured.';
+        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'missing_key' });
+        return res.status(200).json({
+          success: false,
+          providerId: id,
+          providerType: type,
+          model: finalDefaultModel,
+          error: { code: 'missing_key', message: errMsg }
+        });
+      }
+
+      const start = performance.now();
       const result = await LLMProviderService.testConnection(config);
+      const latencyMs = Math.round(performance.now() - start);
+
       await settings.updateProviderLastTest(id, { success: true, message: result.message });
-      res.json({ success: true, message: result.message, timestamp: new Date().toISOString() });
+      res.json({
+        success: true,
+        providerId: id,
+        providerType: type,
+        model: finalDefaultModel,
+        latencyMs,
+        timestamp: new Date().toISOString()
+      });
     } catch (err: any) {
       const errMsg = err.message || String(err);
+      const configMock = {
+        id: id || 'unknown',
+        type: (type || 'gemini') as any,
+        name: id || 'unknown',
+        apiKey: '',
+        defaultModel: defaultModel || ''
+      };
+      const classified = LLMProviderService.classifyError(err, configMock);
       if (id) {
-        await settings.updateProviderLastTest(id, { success: false, message: errMsg, error: errMsg, code: 'test_failed' });
+        await settings.updateProviderLastTest(id, { success: false, message: classified.message, error: classified.message, code: classified.code });
       }
-      res.status(200).json({ success: false, error: errMsg, code: 'test_failed', timestamp: new Date().toISOString() });
+      res.status(200).json({
+        success: false,
+        providerId: id || 'unknown',
+        providerType: type || 'unknown',
+        model: defaultModel || '',
+        error: {
+          code: classified.code,
+          message: classified.message
+        },
+        timestamp: new Date().toISOString()
+      });
     }
   });
 
@@ -315,12 +397,29 @@ async function startServer() {
     }
 
     const sanitized = command.trim();
-    const baseCommand = sanitized.split(' ')[0].toLowerCase();
-    const riskyCommands = ['/op', '/deop', '/stop', '/whitelist', '/ban', '/kick'];
-    if (riskyCommands.includes(baseCommand)) {
+    const cleanCommand = sanitized.startsWith('/') ? sanitized.slice(1) : sanitized;
+    const parts = cleanCommand.split(/\s+/);
+    const cmdName = parts[0].toLowerCase();
+
+    const blockedCommands = [
+      'stop', 'ban', 'ban-ip', 'pardon', 'pardon-ip', 'op', 'deop', 
+      'whitelist', 'kick', 'save-all', 'save-off', 'fill', 'clone', 
+      'publish', 'reload', 'debug'
+    ];
+
+    if (blockedCommands.includes(cmdName)) {
       return res.status(400).json({
-        error: `Command "${baseCommand}" is blocked for system safety. Command execution rejected.`
+        error: `Command "${cmdName}" is blocked for security and server stability.`
       });
+    }
+
+    if (cmdName === 'gamemode') {
+      const mode = parts[1]?.toLowerCase();
+      if (mode === 'creative' || mode === 'c' || mode === '1') {
+        return res.status(400).json({
+          error: `Switching to Creative mode via command execution is blocked for compliance and simulation accuracy.`
+        });
+      }
     }
 
     serverService.executeCommand(command);
@@ -497,6 +596,7 @@ async function startServer() {
           defaultModel: p.defaultModel,
           isConfigured: !!(p.apiKey && p.apiKey.length > 0),
           secretMetadata: meta,
+          lastTest: p.lastTest,
         };
       });
       const scenarios = scenarioLibrary.getScenarios();
@@ -528,6 +628,7 @@ async function startServer() {
         defaultModel: p.defaultModel,
         isConfigured: !!(p.apiKey && p.apiKey.length > 0),
         secretMetadata: meta,
+        lastTest: p.lastTest,
       };
     });
     res.json({ providers: list });
@@ -578,6 +679,7 @@ async function startServer() {
           defaultModel: saved.defaultModel,
           isConfigured: !!(saved.apiKey && saved.apiKey.length > 0),
           secretMetadata: meta,
+          lastTest: saved.lastTest,
         },
       });
     } catch (err: any) {

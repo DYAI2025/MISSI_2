@@ -75,21 +75,55 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
   const isJavaAvailable = runtimeMode === 'java-server' && serverStatus !== 'blocked';
   
   // Compute overall readiness status
-  let readinessState: 'SIMULATION-READY' | 'LIVE-READY' | 'BLOCKED' = 'BLOCKED';
+  let readinessState: 'blocked' | 'needs_attention' | 'not_live_ready' | 'ready_to_configure' | 'live_ready' = 'blocked';
   let readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
   let readinessLabel = 'Blocked / Not Ready';
+  let readinessExplanation = 'No active scenario or active provider loaded.';
 
-  if (isLLMConfigured && hasActiveScenario) {
-    if (isJavaAvailable) {
-      // Compliance check: "Do not claim live-ready Minecraft unless a real Minecraft server + provider + Mineflayer + action E2E passes."
-      // Since E2E test hasn't run yet, we claim SIMULATION-READY or NOT-LIVE-READY.
-      readinessState = 'SIMULATION-READY';
+  const providerTestStatus = activeProviderObj?.lastTest?.status || 'untested';
+
+  if (!isLLMConfigured) {
+    readinessState = 'blocked';
+    readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
+    readinessLabel = 'Blocked: Credentials Missing';
+    readinessExplanation = 'The active LLM provider requires an API key. Please configure and save your credentials.';
+  } else if (providerTestStatus === 'failed') {
+    readinessState = 'blocked';
+    readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
+    readinessLabel = 'Blocked: Connection Failed';
+    readinessExplanation = `LLM test failed with error: ${activeProviderObj?.lastTest?.message || 'unknown error'}. Check API key and network connection.`;
+  } else if (!hasActiveScenario) {
+    readinessState = 'ready_to_configure';
+    readinessColor = 'text-blue-500 bg-blue-500/10 border-blue-500/20';
+    readinessLabel = 'Ready to Configure';
+    readinessExplanation = 'No active scenario template has been selected. Please load or create a scenario to begin.';
+  } else if (providerTestStatus === 'untested') {
+    readinessState = 'needs_attention';
+    readinessColor = 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+    readinessLabel = 'Needs Attention: Untested LLM';
+    readinessExplanation = 'LLM is configured, but the connection has not been tested. Please click "Test Connection" to verify.';
+  } else if (selectedBotIds.length === 0) {
+    readinessState = 'needs_attention';
+    readinessColor = 'text-orange-500 bg-orange-500/10 border-orange-500/20';
+    readinessLabel = 'Needs Attention: No Bots';
+    readinessExplanation = 'No bot profiles have been selected for this workspace. Please select participating bots below.';
+  } else {
+    // LLM test passed, active scenario loaded, bots selected
+    if (serverStatus === 'running' && isJavaAvailable) {
+      readinessState = 'live_ready';
       readinessColor = 'text-brand-green bg-brand-green/10 border-brand-green/20';
-      readinessLabel = 'Simulation Ready (Sandbox Active)';
+      readinessLabel = 'Live Ready (Host Connected)';
+      readinessExplanation = 'Verified! A real Minecraft server is running, LLM provider test passed, and bots are configured.';
     } else if (allowSimulationMode) {
-      readinessState = 'SIMULATION-READY';
-      readinessColor = 'text-brand-green bg-brand-green/10 border-brand-green/20';
-      readinessLabel = 'Simulation Ready (Sandbox Active)';
+      readinessState = 'not_live_ready';
+      readinessColor = 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
+      readinessLabel = 'Simulation Ready (Not Live Ready)';
+      readinessExplanation = 'LLM is verified and the sandbox emulator is active. Click Run Simulation to begin. Real Minecraft Java server environment is currently unavailable.';
+    } else {
+      readinessState = 'blocked';
+      readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
+      readinessLabel = 'Blocked: Java Offline';
+      readinessExplanation = 'Simulation sandbox is disabled, and the real Minecraft Java server environment is currently unavailable.';
     }
   }
 
@@ -105,7 +139,7 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
   };
 
   return (
-    <div id="readiness-panel" className="bg-brand-aside border border-brand-border rounded-none p-4 shadow-none flex flex-col space-y-4">
+    <div id="readiness-panel" data-readiness-state={readinessState} className="bg-brand-aside border border-brand-border rounded-none p-4 shadow-none flex flex-col space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-brand-border pb-3">
         <div className="flex items-center gap-2">
@@ -117,6 +151,27 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
         </span>
       </div>
 
+      {/* Explanation Banner */}
+      <div className={`p-2.5 border text-[9.5px] font-mono leading-normal rounded-none ${
+        readinessState === 'blocked'
+          ? 'bg-red-500/5 border-red-500/10 text-red-400'
+          : readinessState === 'needs_attention'
+          ? 'bg-orange-500/5 border-orange-500/10 text-orange-400'
+          : readinessState === 'ready_to_configure'
+          ? 'bg-blue-500/5 border-blue-500/10 text-blue-400'
+          : readinessState === 'not_live_ready'
+          ? 'bg-yellow-500/5 border-yellow-500/10 text-yellow-400'
+          : 'bg-brand-green/5 border-brand-green/10 text-brand-green-light'
+      }`}>
+        <div className="flex gap-1.5 items-start">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold uppercase tracking-wider block mb-0.5">Workspace Status Report //</span>
+            {readinessExplanation}
+          </div>
+        </div>
+      </div>
+
       {/* Checklist items */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {/* Prereq 1: LLM Connection */}
@@ -125,7 +180,13 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
             <div className="flex items-center justify-between gap-1">
               <span className="text-[9px] font-mono text-brand-muted uppercase">01 // LLM Engine</span>
               {isLLMConfigured ? (
-                <span className="text-[8px] text-brand-green font-mono font-bold uppercase bg-brand-green/10 border border-brand-green/20 px-1 py-0.2">ACTIVE</span>
+                <span className={`text-[8px] font-mono font-bold uppercase border px-1 py-0.2 ${
+                  providerTestStatus === 'passed'
+                    ? 'text-brand-green bg-brand-green/10 border-brand-green/20'
+                    : providerTestStatus === 'failed'
+                    ? 'text-red-500 bg-red-500/10 border-red-500/20'
+                    : 'text-orange-400 bg-orange-400/10 border-orange-400/20'
+                }`}>{providerTestStatus === 'passed' ? 'PASSED' : providerTestStatus === 'failed' ? 'FAILED' : 'UNTESTED'}</span>
               ) : (
                 <span className="text-[8px] text-red-500 font-mono font-bold uppercase bg-red-500/10 border border-red-500/20 px-1 py-0.2">MISSING KEY</span>
               )}
@@ -136,6 +197,26 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
             <p className="text-[9px] text-brand-muted font-mono mt-1 leading-tight uppercase">
               Model: {activeProviderObj?.defaultModel || 'gemini-2.5-flash'}
             </p>
+
+            {activeProviderObj?.lastTest && (
+              <div className="mt-2 text-[8px] font-mono border-t border-brand-border/40 pt-1.5 space-y-0.5">
+                {activeProviderObj.lastTest.testedAt && (
+                  <div className="text-brand-muted">
+                    TESTED: {new Date(activeProviderObj.lastTest.testedAt).toLocaleTimeString()}
+                  </div>
+                )}
+                {activeProviderObj.lastTest.errorCode && (
+                  <div className="text-red-400 font-bold">
+                    CODE: {activeProviderObj.lastTest.errorCode}
+                  </div>
+                )}
+                {activeProviderObj.lastTest.message && (
+                  <div className="text-brand-muted max-h-12 overflow-y-auto leading-normal">
+                    {activeProviderObj.lastTest.message}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           <div className="mt-3">
             <button
