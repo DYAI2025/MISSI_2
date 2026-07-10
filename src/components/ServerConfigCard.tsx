@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { GameMode, Difficulty, MinecraftServerConfig } from '../types/index.js';
-import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle, Layers } from 'lucide-react';
+import { Play, Square, Settings, Terminal, Radio, Activity, CheckCircle, AlertTriangle, AlertCircle, Layers, Server } from 'lucide-react';
 import { usePersistence } from '../hooks/usePersistence.js';
 
 interface ServerConfigCardProps {
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  serverStatus: 'stopped' | 'validating' | 'blocked' | 'starting' | 'running' | 'stopping' | 'failed';
   runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped';
   config: MinecraftServerConfig;
   onUpdateConfig: (config: Partial<MinecraftServerConfig>) => Promise<void>;
@@ -38,6 +38,96 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const [acceptEULA, setAcceptEULA] = useState(false);
   const [useEmulator, setUseEmulator] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+
+  // Preflight Report states
+  const [preflightReport, setPreflightReport] = useState<{
+    javaAvailable: boolean;
+    eulaAccepted: boolean;
+    jarExists: boolean;
+    issues: string[];
+    ready: boolean;
+    status: 'ready' | 'blocked';
+  } | null>(null);
+  const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
+
+  // Custom Java runtime setting states
+  const [javaPath, setJavaPath] = useState('java');
+  const [jarPath, setJarPath] = useState('server.jar');
+  const [workingDir, setWorkingDir] = useState('minecraft-server');
+  const [maxMemory, setMaxMemory] = useState('1024M');
+  const [minMemory, setMinMemory] = useState('1024M');
+  const [isSavingRuntime, setIsSavingRuntime] = useState(false);
+  const [runtimeSaveMessage, setRuntimeSaveMessage] = useState<string | null>(null);
+  const [showJavaSettings, setShowJavaSettings] = useState(false);
+
+  const isPathsPopulated = useMemo(() => {
+    return !!(javaPath?.trim() && jarPath?.trim() && workingDir?.trim());
+  }, [javaPath, jarPath, workingDir]);
+
+  useEffect(() => {
+    if (!isPathsPopulated) {
+      setAcceptEULA(false);
+    }
+  }, [isPathsPopulated]);
+
+  const fetchRuntimeConfig = async () => {
+    try {
+      const res = await fetch('/api/server/runtime-config');
+      if (res.ok) {
+        const data = await res.json();
+        setJavaPath(data.javaPath || 'java');
+        setJarPath(data.jarPath || 'server.jar');
+        setWorkingDir(data.workingDir || 'minecraft-server');
+        setMaxMemory(data.maxMemory || '1024M');
+        setMinMemory(data.minMemory || '1024M');
+      }
+    } catch (err) {
+      console.warn('Failed to fetch runtime config:', err);
+    }
+  };
+
+  const handleSaveRuntime = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingRuntime(true);
+    setRuntimeSaveMessage(null);
+    try {
+      const res = await fetch('/api/server/runtime-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ javaPath, jarPath, workingDir, maxMemory, minMemory }),
+      });
+      if (res.ok) {
+        setRuntimeSaveMessage('Java Settings Saved');
+        setTimeout(() => setRuntimeSaveMessage(null), 3000);
+        checkPreflight();
+      } else {
+        setRuntimeSaveMessage('Failed to save settings');
+      }
+    } catch (err) {
+      setRuntimeSaveMessage('Error saving settings');
+    } finally {
+      setIsSavingRuntime(false);
+    }
+  };
+
+  const checkPreflight = async () => {
+    setIsCheckingPreflight(true);
+    try {
+      const res = await fetch('/api/server/preflight');
+      if (res.ok) {
+        const data = await res.json();
+        setPreflightReport(data);
+      }
+    } catch (err) {
+      console.warn('Failed to fetch preflight report:', err);
+    } finally {
+      setIsCheckingPreflight(false);
+    }
+  };
+
+  useEffect(() => {
+    checkPreflight();
+  }, [serverStatus, acceptEULA]);
 
   const [isDeletingWorld, setIsDeletingWorld] = useState(false);
   const [worldDeleteMessage, setWorldDeleteMessage] = useState<string | null>(null);
@@ -154,7 +244,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
     defaultProviderId, intervalMs, savedWorkspaceConfig
   ]);
 
-  // Load workspace preferences on mount
+  // Load workspace preferences and runtime configuration on mount
   useEffect(() => {
     let active = true;
     const fetchWorkspace = async () => {
@@ -178,6 +268,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       }
     };
     fetchWorkspace();
+    fetchRuntimeConfig();
     return () => {
       active = false;
     };
@@ -186,6 +277,19 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const handleStart = async () => {
     setStartError(null);
     try {
+      // 1. Fetch current preflight report
+      const res = await fetch('/api/server/preflight');
+      if (!res.ok) {
+        throw new Error('Failed to run server preflight check.');
+      }
+      const report = await res.json();
+      setPreflightReport(report);
+
+      // 2. Conditionally execute only if ready is true
+      if (!report.ready) {
+        throw new Error('Server cannot start: preflight diagnostics failed. Please make sure Java executables, server JARs, working directories, and Minecraft EULA acceptance are configured and valid.');
+      }
+
       await onStartServer(acceptEULA, useEmulator);
     } catch (err: any) {
       setStartError(err.message || 'Failed to start server.');
@@ -242,6 +346,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
   const getStatusStyle = () => {
     switch (serverStatus) {
       case 'running': return 'bg-brand-green/10 text-brand-green border-brand-green/40';
+      case 'validating': return 'bg-blue-500/10 text-blue-400 border-blue-500/30 animate-pulse';
       case 'starting': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30 animate-pulse';
       case 'stopping': return 'bg-red-500/10 text-red-400 border-red-500/30';
       case 'blocked': return 'bg-orange-500/10 text-orange-400 border-orange-500/30';
@@ -293,6 +398,7 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           <div className={`px-2 py-0.5 text-[9px] font-mono font-bold rounded-none border ${getStatusStyle()} flex items-center gap-1.5`}>
             <span className={`w-1.5 h-1.5 rounded-full ${
               serverStatus === 'running' ? 'bg-brand-green' : 
+              serverStatus === 'validating' ? 'bg-blue-400' :
               serverStatus === 'starting' ? 'bg-yellow-400' : 
               serverStatus === 'blocked' ? 'bg-orange-400' :
               serverStatus === 'failed' ? 'bg-red-500' :
@@ -513,57 +619,151 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
         )}
       </div>
 
-      {/* EULA Acceptance & Sandbox Emulator */}
-      {serverStatus === 'stopped' && (
-        <div className="mt-4 border-t border-brand-border pt-4 space-y-3">
-          <label className="flex items-start gap-2.5 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
-              checked={acceptEULA}
-              onChange={(e) => setAcceptEULA(e.target.checked)}
-            />
-            <span className="text-[10px] font-mono text-brand-text leading-tight">
-              I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer" className="text-brand-green underline hover:text-brand-text">Minecraft EULA</a>. Required to launch a real server.
-            </span>
-          </label>
-
-          {allowSimulationMode ? (
-            <label className="flex items-start gap-2.5 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
-                checked={useEmulator}
-                onChange={(e) => setUseEmulator(e.target.checked)}
-              />
-              <span className="text-[10px] font-mono text-brand-text leading-tight text-orange-400">
-                Use Sandbox Emulator. Bypasses Java/server.jar check & runs local simulation (Simulation Mode — Not Live Ready).
-              </span>
-            </label>
-          ) : (
-            <div className="text-[9px] font-mono text-brand-muted italic uppercase border border-brand-border bg-brand-card p-2">
-              * Sandbox Emulator is locked (Requires <strong className="text-orange-400">ALLOW_SIMULATION_MODE=true</strong> in environment)
+      {/* Real Server Configuration */}
+      {(serverStatus === 'stopped' || serverStatus === 'blocked' || serverStatus === 'failed') && (
+        <div id="real-server-config-section" className="mt-6 border-t border-brand-border pt-4">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <Server className="w-4 h-4 text-brand-green" />
+              <h3 className="text-[10px] font-mono uppercase tracking-widest text-brand-muted font-bold">Real Server Configuration</h3>
             </div>
-          )}
+            {runtimeSaveMessage && (
+              <span className="text-[9px] font-mono text-brand-green font-bold uppercase animate-pulse">{runtimeSaveMessage}</span>
+            )}
+          </div>
 
-          <div className="pt-3 border-t border-brand-border flex flex-col gap-2">
-            <button
-              type="button"
-              onClick={handleDeleteWorld}
-              disabled={isDeletingWorld}
-              className="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded-none bg-red-950/20 text-red-400 border border-red-900/50 hover:bg-red-950/40 hover:text-red-300 font-mono font-bold text-[10px] uppercase transition-all disabled:opacity-50"
-            >
-              Delete Generated World Folder
-            </button>
-            {worldDeleteMessage && (
-              <div className={`p-2 text-[9px] font-mono border ${
-                worldDeleteMessage.startsWith('SUCCESS')
-                  ? 'bg-brand-green/10 text-brand-green border-brand-green/30'
-                  : 'bg-red-950/40 text-red-400 border-red-500/30'
-              }`}>
-                {worldDeleteMessage}
+          <form onSubmit={handleSaveRuntime} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Java Executable Path</label>
+                <input
+                  type="text"
+                  value={javaPath}
+                  onChange={(e) => setJavaPath(e.target.value)}
+                  placeholder="e.g. java"
+                  className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Server JAR Path</label>
+                <input
+                  type="text"
+                  value={jarPath}
+                  onChange={(e) => setJarPath(e.target.value)}
+                  placeholder="e.g. server.jar"
+                  className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Working Directory</label>
+                <input
+                  type="text"
+                  value={workingDir}
+                  onChange={(e) => setWorkingDir(e.target.value)}
+                  placeholder="e.g. minecraft-server"
+                  className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Max Memory (-Xmx)</label>
+                <input
+                  type="text"
+                  value={maxMemory}
+                  onChange={(e) => setMaxMemory(e.target.value)}
+                  placeholder="e.g. 1024M"
+                  className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] text-brand-muted uppercase mb-1 italic font-mono">Min Memory (-Xms)</label>
+                <input
+                  type="text"
+                  value={minMemory}
+                  onChange={(e) => setMinMemory(e.target.value)}
+                  placeholder="e.g. 1024M"
+                  className="w-full text-xs font-mono bg-brand-card border border-brand-border rounded-none px-3 py-1.5 text-brand-text focus:outline-none focus:border-brand-green transition-colors"
+                />
+              </div>
+            </div>
+
+            {/* EULA Acceptance Checkbox */}
+            <div className="p-3 bg-brand-card/50 border border-brand-border/60">
+              <label className={`flex items-start gap-2.5 select-none ${isPathsPopulated ? 'cursor-pointer text-brand-text' : 'cursor-not-allowed text-brand-muted opacity-50'}`}>
+                <input
+                  type="checkbox"
+                  id="eula-acceptance-checkbox"
+                  className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
+                  checked={acceptEULA}
+                  disabled={!isPathsPopulated}
+                  onChange={(e) => setAcceptEULA(e.target.checked)}
+                />
+                <span className="text-[10px] font-mono leading-tight">
+                  I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer" className={`text-brand-green underline hover:text-brand-text ${!isPathsPopulated ? 'pointer-events-none' : ''}`}>Minecraft EULA</a>. Required to launch a real server.
+                  {!isPathsPopulated && (
+                    <span className="block text-[9px] text-yellow-500 font-bold uppercase mt-1">
+                      * Populate Java Executable, Server JAR, and Working Directory paths to enable EULA acceptance.
+                    </span>
+                  )}
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-[9px] font-mono text-brand-muted italic">
+                * Configures the physical server process executable and directories.
+              </span>
+              <button
+                type="submit"
+                disabled={isSavingRuntime}
+                className="text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-border-light text-brand-text border border-brand-border hover:bg-brand-border transition-colors disabled:opacity-50"
+              >
+                {isSavingRuntime ? 'Saving Settings...' : 'Save Server Settings'}
+              </button>
+            </div>
+          </form>
+
+          {/* Sandbox & Tools Section */}
+          <div className="mt-4 border-t border-brand-border/60 pt-4 space-y-3">
+            {allowSimulationMode ? (
+              <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 accent-brand-green bg-brand-bg border border-brand-border rounded-none h-3.5 w-3.5 shrink-0"
+                  checked={useEmulator}
+                  onChange={(e) => setUseEmulator(e.target.checked)}
+                />
+                <span className="text-[10px] font-mono text-brand-text leading-tight text-orange-400">
+                  Use Sandbox Emulator. Bypasses Java/server.jar check & runs local simulation (Simulation Mode — Not Live Ready).
+                </span>
+              </label>
+            ) : (
+              <div className="text-[9px] font-mono text-brand-muted italic uppercase border border-brand-border bg-brand-card p-2">
+                * Sandbox Emulator is locked (Requires <strong className="text-orange-400">ALLOW_SIMULATION_MODE=true</strong> in environment)
               </div>
             )}
+
+            <div className="pt-3 border-t border-brand-border flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={handleDeleteWorld}
+                disabled={isDeletingWorld}
+                className="w-full flex items-center justify-center gap-2 py-1.5 px-3 rounded-none bg-red-950/20 text-red-400 border border-red-900/50 hover:bg-red-950/40 hover:text-red-300 font-mono font-bold text-[10px] uppercase transition-all disabled:opacity-50"
+              >
+                Delete Generated World Folder
+              </button>
+              {worldDeleteMessage && (
+                <div className={`p-2 text-[9px] font-mono border ${
+                  worldDeleteMessage.startsWith('SUCCESS')
+                    ? 'bg-brand-green/10 text-brand-green border-brand-green/30'
+                    : 'bg-red-950/40 text-red-400 border-red-500/30'
+                }`}>
+                  {worldDeleteMessage}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -580,10 +780,11 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
 
       {/* Control Buttons */}
       <div className="flex gap-3 mt-4 border-t border-brand-border pt-4">
-        {serverStatus === 'stopped' ? (
+        {serverStatus === 'stopped' || serverStatus === 'blocked' || serverStatus === 'failed' ? (
           <button
             onClick={handleStart}
-            className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-none bg-brand-green hover:opacity-90 text-brand-bg font-mono font-bold text-xs uppercase transition-all"
+            disabled={preflightReport ? (preflightReport.status === 'blocked' || !preflightReport.ready) : false}
+            className="w-full flex items-center justify-center gap-2 py-2 px-4 rounded-none bg-brand-green hover:opacity-90 text-brand-bg font-mono font-bold text-xs uppercase transition-all disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <Play className="w-3.5 h-3.5 fill-brand-bg" /> Start Minecraft Server
           </button>
@@ -625,6 +826,39 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
           </form>
         </div>
       )}
+
+      {/* Preflight Diagnostics Panel */}
+      <div id="preflight-diagnostics-panel" className="mt-4 border-t border-brand-border pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-1.5 text-[10px] text-brand-muted font-mono uppercase">
+            <CheckCircle className="w-3.5 h-3.5 text-brand-green" />
+            <span>Preflight Diagnostics</span>
+          </div>
+          <button 
+            type="button"
+            onClick={checkPreflight}
+            disabled={isCheckingPreflight}
+            className="text-[8px] font-mono uppercase bg-brand-border px-1.5 py-0.5 hover:bg-brand-border-light text-brand-muted"
+          >
+            {isCheckingPreflight ? 'Checking...' : 'Refresh'}
+          </button>
+        </div>
+        {preflightReport ? (
+          <div className="grid grid-cols-3 gap-2 text-center text-[9px] font-mono uppercase tracking-wider">
+            <div className={`p-1.5 border ${preflightReport.javaAvailable ? 'bg-brand-green/10 text-brand-green border-brand-green/30' : 'bg-red-950/20 text-red-400 border-red-900/40'}`}>
+              Java: {preflightReport.javaAvailable ? 'OK' : 'MISSING'}
+            </div>
+            <div className={`p-1.5 border ${preflightReport.jarExists ? 'bg-brand-green/10 text-brand-green border-brand-green/30' : 'bg-red-950/20 text-red-400 border-red-900/40'}`}>
+              Jar: {preflightReport.jarExists ? 'OK' : 'MISSING'}
+            </div>
+            <div className={`p-1.5 border ${preflightReport.eulaAccepted ? 'bg-brand-green/10 text-brand-green border-brand-green/30' : 'bg-red-950/20 text-red-400 border-red-900/40'}`}>
+              EULA: {preflightReport.eulaAccepted ? 'OK' : 'REQUIRED'}
+            </div>
+          </div>
+        ) : (
+          <span className="text-[9px] font-mono text-brand-muted italic">Running diagnostics...</span>
+        )}
+      </div>
 
       {/* Protocol Mock Diagnostic Section */}
       <div className="mt-4 border-t border-brand-border pt-4">

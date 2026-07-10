@@ -208,7 +208,12 @@ export class BotOrchestratorService {
 
     this.isSimulating = true;
     const eventStore = EventStoreService.getInstance();
-    eventStore.startRun(this.activeScenario?.title || 'Custom Simulation', serverService.getConfig());
+    eventStore.startRun(
+      this.activeScenario?.title || 'Custom Simulation',
+      serverService.getConfig(),
+      this.activeScenario || undefined,
+      (this.activeScenario as any)?.originalMarkdown
+    );
 
     this.addLogEvent(EventType.SYSTEM, 'Autonomous Minecraft Scenario Simulation loop started.');
 
@@ -280,23 +285,37 @@ export class BotOrchestratorService {
         
         if (!activeKey && provider.type !== LLMProviderType.OLLAMA && provider.type !== LLMProviderType.LMSTUDIO) {
           // No API key -> Fallback to intelligent local simulation planner so UI stays interactive and works
+          const startTime = Date.now();
           decision = this.getSimulatedDecision(bot, context);
+          const latencyMs = Date.now() - startTime;
           eventStore.addEvent(
             EventType.LLM_CALL,
             `[SIMULATED PLANNER] No API key found for ${provider.name}. Procedural decision generated.`,
             bot.id,
             bot.name,
-            { reason_summary: decision.reason_summary }
+            {
+              reason_summary: decision.reason_summary,
+              action: decision.action,
+              parameters: decision.parameters,
+              message: decision.message || '',
+              latencyMs,
+              decisionSource: 'simulation',
+              activeGoal: bot.goal || null,
+              confidence: null,
+              observationSummary: null
+            }
           );
         } else {
           // Real API Call!
           try {
+            const startTime = Date.now();
             const rawDecision = await LLMProviderService.getBotDecision(
               provider,
               systemInstruction,
               userPrompt,
               this.getResponseSchema()
             );
+            const latencyMs = Date.now() - startTime;
 
             decision = {
               reason_summary: rawDecision.reason_summary || rawDecision.rationale || '',
@@ -311,16 +330,45 @@ export class BotOrchestratorService {
               `[REAL API CALL] ${provider.name} returned validated decision.`,
               bot.id,
               bot.name,
-              { reason_summary: decision.reason_summary, action: decision.action, parameters: decision.parameters }
+              {
+                reason_summary: decision.reason_summary,
+                action: decision.action,
+                parameters: decision.parameters,
+                message: decision.message || '',
+                latencyMs,
+                decisionSource: 'real_provider',
+                activeGoal: bot.goal || null,
+                confidence: (rawDecision as any).confidence !== undefined ? (rawDecision as any).confidence : null,
+                observationSummary: (rawDecision as any).observationSummary || null
+              }
             );
           } catch (err: any) {
             // fallback gracefully on API rate limits / errors
+            const startTime = Date.now();
             decision = this.getSimulatedDecision(bot, context);
+            const latencyMs = Date.now() - startTime;
             eventStore.addEvent(
               EventType.ERROR,
               `LLM Provider ${provider.name} failed: ${err.message || err}. Falling back to simulated plan.`,
               bot.id,
               bot.name
+            );
+            eventStore.addEvent(
+              EventType.LLM_CALL,
+              `[SIMULATED PLANNER] LLM provider failed. Falling back to simulated decision.`,
+              bot.id,
+              bot.name,
+              {
+                reason_summary: decision.reason_summary,
+                action: decision.action,
+                parameters: decision.parameters,
+                message: decision.message || '',
+                latencyMs,
+                decisionSource: 'fallback_wait',
+                activeGoal: bot.goal || null,
+                confidence: null,
+                observationSummary: null
+              }
             );
           }
         }
@@ -362,14 +410,14 @@ export class BotOrchestratorService {
     };
   }
 
-  private getSystemPrompt(): string {
+  public getSystemPrompt(): string {
     return `You are an advanced Minecraft autonomous AI bot. You run in a server-side simulator.
 You must analyze your current surroundings, objectives, and inventory, and select your next optimal action.
 
 You must reply strictly in JSON format. Do not write any normal conversational text outside the JSON.
 Your JSON response must match this schema:
 {
-  "reason_summary": "Explain your thought process briefly.",
+  "reason_summary": "Brief public reason for the selected action. Do not include hidden or private chain-of-thought.",
   "action": "move" | "harvest" | "place" | "craft" | "talk" | "idle",
   "parameters": {
     // For move: { "x": number, "y": number, "z": number }
@@ -383,7 +431,7 @@ Your JSON response must match this schema:
 }`;
   }
 
-  private getUserPrompt(bot: BotConfig, context: any): string {
+  public getUserPrompt(bot: BotConfig, context: any): string {
     return `Your name: ${bot.name}
 Your Role: ${bot.role}
 Your Goal: ${bot.goal}
@@ -407,11 +455,11 @@ ${JSON.stringify(context.objectives, null, 2)}
 What is your next action? Select the action and parameters carefully.`;
   }
 
-  private getResponseSchema() {
+  public getResponseSchema() {
     return {
       type: 'OBJECT',
       properties: {
-        reason_summary: { type: 'STRING', description: 'Your strategic planning thought process.' },
+        reason_summary: { type: 'STRING', description: 'Brief public reason for the selected action. Do not include hidden or private chain-of-thought.' },
         action: { type: 'STRING', description: 'The validated action keyword (move, harvest, place, craft, talk, idle).' },
         parameters: {
           type: 'OBJECT',

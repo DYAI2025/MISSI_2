@@ -1,4 +1,4 @@
-import { MinecraftServerConfig, LLMProviderConfig, LLMProviderType, WorkspaceConfig } from '../types/index.js';
+import { MinecraftServerConfig, LLMProviderConfig, LLMProviderType, WorkspaceConfig, MinecraftRuntimeConfig } from '../types/index.js';
 import { PersistenceService } from './PersistenceService.js';
 import { validateMinecraftServerConfig } from '../domain/settings/settings.schema.ts';
 import { validateLLMProviderConfig } from '../domain/providers/provider.schema.ts';
@@ -12,10 +12,12 @@ export class SettingsService {
   private serverConfigPath = 'settings/server-config.json';
   private workspaceConfigPath = 'settings/workspace.default.json';
   private providersConfigPath = 'settings/providers.public.json';
+  private runtimeConfigPath = 'settings/runtime-config.json';
 
   private cachedServerConfig: MinecraftServerConfig | null = null;
   private cachedWorkspaceConfig: WorkspaceConfig | null = null;
   private cachedProviders: LLMProviderConfig[] = [];
+  private cachedRuntimeConfig: MinecraftRuntimeConfig | null = null;
 
   private constructor() {
     this.persistence = PersistenceService.getInstance();
@@ -133,6 +135,19 @@ export class SettingsService {
         apiKey: effectiveKey,
       };
     });
+
+    // 4. Runtime config
+    const defaultRuntime: MinecraftRuntimeConfig = {
+      acceptEula: false,
+      useEmulator: false,
+      javaPath: 'java',
+      jarPath: 'server.jar',
+      workingDir: 'minecraft-server',
+      maxMemory: '1024M',
+      minMemory: '1024M',
+    };
+    const loadedRuntime = await this.persistence.readJson<Partial<MinecraftRuntimeConfig>>(this.runtimeConfigPath, {});
+    this.cachedRuntimeConfig = { ...defaultRuntime, ...loadedRuntime };
   }
 
   public getServerConfig(): MinecraftServerConfig {
@@ -263,5 +278,20 @@ export class SettingsService {
     if (p) {
       p.apiKey = p.type === LLMProviderType.GEMINI ? (process.env.GEMINI_API_KEY || '') : '';
     }
+  }
+
+  public getRuntimeConfig(): MinecraftRuntimeConfig {
+    if (!this.cachedRuntimeConfig) {
+      throw new Error('SettingsService not initialized.');
+    }
+    return this.cachedRuntimeConfig;
+  }
+
+  public async saveRuntimeConfig(config: Partial<MinecraftRuntimeConfig>): Promise<MinecraftRuntimeConfig> {
+    const current = this.getRuntimeConfig();
+    const updated = { ...current, ...config };
+    this.cachedRuntimeConfig = updated;
+    await this.persistence.writeJson(this.runtimeConfigPath, updated);
+    return updated;
   }
 }

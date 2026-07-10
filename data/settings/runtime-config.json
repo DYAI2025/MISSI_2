@@ -1,0 +1,9 @@
+{
+  "acceptEula": false,
+  "useEmulator": false,
+  "javaPath": "java",
+  "jarPath": "server.jar",
+  "workingDir": "minecraft-server",
+  "maxMemory": "1024M",
+  "minMemory": "1024M"
+}

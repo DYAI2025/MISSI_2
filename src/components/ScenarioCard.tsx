@@ -75,7 +75,7 @@ export type ScenarioItem = ScenarioV2;
 interface ScenarioCardProps {
   onParseScenario: (markdown: string) => Promise<Scenario | null>;
   onSpawnBots: (scenario: Scenario) => Promise<void>;
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  serverStatus: 'stopped' | 'validating' | 'blocked' | 'starting' | 'running' | 'stopping' | 'failed';
   activeScenario?: Scenario;
   onApplyWorldConfig?: (config: any) => Promise<void>;
   markdown: string;

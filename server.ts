@@ -4,12 +4,14 @@ import { promises as fs } from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { fileURLToPath } from 'url';
 import { MinecraftServerService } from './src/services/MinecraftServerService.js';
+import { MinecraftServerPreflightService } from './src/services/MinecraftServerPreflightService.js';
 import { ScenarioService } from './src/services/ScenarioService.js';
 import { EventStoreService } from './src/services/EventStoreService.js';
 import { BotOrchestratorService } from './src/services/BotOrchestratorService.js';
 import { GameMode, Difficulty, EventType } from './src/types/index.js';
 import { SmokeTestService } from './src/services/SmokeTestService.js';
 import { LLMProviderService } from './src/services/LLMProviderService.js';
+import { isCommandAllowed } from './src/domain/server/server-command-policy.js';
 
 import { SecretStoreService } from './src/services/SecretStoreService.js';
 import { SettingsService } from './src/services/SettingsService.js';
@@ -157,6 +159,40 @@ async function startServer() {
       res.json({ success: true, config: serverService.getConfig() });
     } catch (err: any) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Preflight Diagnostics API
+   */
+  app.get('/api/server/preflight', async (req, res) => {
+    try {
+      const preflightService = MinecraftServerPreflightService.getInstance();
+      const report = await preflightService.runPreflight();
+      res.json(report);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /**
+   * Runtime Config API
+   */
+  app.get('/api/server/runtime-config', async (req, res) => {
+    try {
+      const config = serverService.getRuntimeConfig();
+      res.json(config);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/server/runtime-config', async (req, res) => {
+    try {
+      await serverService.updateRuntimeConfig(req.body);
+      res.json(serverService.getRuntimeConfig());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -402,18 +438,9 @@ async function startServer() {
       });
     }
 
-    const sanitized = command.trim();
-    const cleanCommand = sanitized.startsWith('/') ? sanitized.slice(1) : sanitized;
-    const parts = cleanCommand.split(/\s+/);
-    const cmdName = parts[0].toLowerCase();
-
-    // Strict Sprint 6 command whitelist
-    const whitelist = ['say', 'tellraw', 'time', 'weather', 'gamerule', 'difficulty', 'list', 'whitelist'];
-
-    if (!whitelist.includes(cmdName)) {
-      return res.status(403).json({
-        error: `Command execution of "${cmdName}" is blocked for security and compliance. Only the following commands are allowed: ${whitelist.join(', ')}.`
-      });
+    const policyRes = isCommandAllowed(command);
+    if (!policyRes.allowed) {
+      return res.status(403).json({ error: policyRes.reason });
     }
 
     serverService.executeCommand(command);

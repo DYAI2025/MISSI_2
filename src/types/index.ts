@@ -133,6 +133,14 @@ export interface RunManifest {
   serverConfig: MinecraftServerConfig;
   status: 'idle' | 'running' | 'completed' | 'failed';
   logs: EventLog[];
+  research?: {
+    question?: string;
+    hypothesis?: string;
+    measurementFocus?: string[];
+    observationProtocol?: string;
+    expectedEmergencePatterns?: string[];
+  };
+  scenario?: Scenario;
 }
 
 export interface WorldBlock {
@@ -143,7 +151,7 @@ export interface WorldBlock {
 }
 
 export interface SimulationState {
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  serverStatus: 'stopped' | 'validating' | 'blocked' | 'starting' | 'running' | 'stopping' | 'failed';
   runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped';
   serverConfig: MinecraftServerConfig;
   bots: BotConfig[];
@@ -161,6 +169,16 @@ export interface WorkspaceConfig {
   lastAppliedAt?: string;
 }
 
+export interface MinecraftRuntimeConfig {
+  acceptEula: boolean;
+  useEmulator: boolean;
+  javaPath?: string;
+  jarPath?: string;
+  workingDir?: string;
+  maxMemory?: string;
+  minMemory?: string;
+}
+
 export interface BotDecisionTrace {
   runId: string;
   step: number;
@@ -168,12 +186,14 @@ export interface BotDecisionTrace {
   botName: string;
   providerId: string;
   model: string;
-  observationSummary: string;
-  activeGoal: string;
-  selectedAction: string;
-  actionParameters: Record<string, unknown>;
-  reasonSummary: string;
-  confidence?: number;
-  rawResponseRedacted?: unknown;
+  reason_summary: string;
+  action: string;
+  parameters: Record<string, any>;
+  message?: string;
+  latencyMs?: number;
   timestamp: string;
+  decisionSource: 'real_provider' | 'simulation' | 'fallback_wait';
+  activeGoal?: string | null;
+  confidence?: number | null;
+  observationSummary?: string | null;
 }

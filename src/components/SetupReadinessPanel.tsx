@@ -6,7 +6,7 @@ interface SetupReadinessPanelProps {
   workspace: WorkspaceConfig | null;
   providers: (LLMProviderConfig & { isConfigured: boolean })[];
   botProfiles: any[];
-  serverStatus: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed';
+  serverStatus: 'stopped' | 'validating' | 'blocked' | 'starting' | 'running' | 'stopping' | 'failed';
   runtimeMode: string;
   allowSimulationMode: boolean;
   onSaveWorkspace: (config: Partial<WorkspaceConfig>) => Promise<void>;

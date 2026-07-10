@@ -204,6 +204,15 @@ export default function App() {
 
   const handleStartServer = async (acceptEULA: boolean = false, useEmulator: boolean = false) => {
     try {
+      // Fetch current preflight report
+      const preflightRes = await fetch('/api/server/preflight');
+      if (preflightRes.ok) {
+        const report = await preflightRes.json();
+        if (!report.ready) {
+          throw new Error('Server preflight check is not passing. Please make sure Java executables, server JARs, working directories, and Minecraft EULA acceptance are configured and valid.');
+        }
+      }
+
       const res = await fetch('/api/server/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -416,6 +425,8 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
             <div className={`w-3 h-3 rounded-full shadow-[0_0_8px_currentColor] ${
               state.serverStatus === 'running' 
                 ? 'bg-brand-green text-brand-green' 
+                : state.serverStatus === 'validating'
+                ? 'bg-blue-500 text-blue-500 animate-pulse'
                 : state.serverStatus === 'starting' 
                 ? 'bg-yellow-500 text-yellow-500 animate-pulse' 
                 : 'bg-red-500 text-red-500'
@@ -423,6 +434,8 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
             <span className={`font-mono text-[10px] uppercase tracking-widest ${
               state.serverStatus === 'running' 
                 ? 'text-brand-green' 
+                : state.serverStatus === 'validating'
+                ? 'text-blue-500'
                 : state.serverStatus === 'starting' 
                 ? 'text-yellow-500' 
                 : 'text-brand-muted'
@@ -444,9 +457,9 @@ ${invStr ? `- Inventory: ${invStr}` : ''}
           </div>
           <div className="h-4 w-px bg-brand-border hidden md:block"></div>
           <div className="flex items-center gap-2">
-            {state.serverStatus === 'stopped' ? (
+            {state.serverStatus === 'stopped' || state.serverStatus === 'blocked' || state.serverStatus === 'failed' ? (
               <button
-                onClick={handleStartServer}
+                onClick={() => handleStartServer(false, false)}
                 className="bg-brand-green text-brand-bg text-[11px] px-3 py-1 font-bold uppercase tracking-wider rounded-none hover:opacity-90 transition-opacity"
               >
                 Launch Server

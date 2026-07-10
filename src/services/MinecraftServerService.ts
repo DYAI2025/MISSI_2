@@ -1,13 +1,15 @@
 import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { MinecraftServerConfig, GameMode, Difficulty, WorldBlock } from '../types/index.js';
+import { MinecraftServerConfig, GameMode, Difficulty, WorldBlock, MinecraftRuntimeConfig } from '../types/index.js';
 import { SettingsService } from './SettingsService.js';
+import { isCommandAllowed } from '../domain/server/server-command-policy.js';
+import { MinecraftServerPreflightService } from './MinecraftServerPreflightService.js';
 
 export class MinecraftServerService {
   private static instance: MinecraftServerService | null = null;
   private serverProcess: ChildProcess | null = null;
-  private status: 'stopped' | 'starting' | 'running' | 'stopping' | 'blocked' | 'failed' = 'stopped';
+  private status: 'stopped' | 'validating' | 'blocked' | 'starting' | 'running' | 'stopping' | 'failed' = 'stopped';
   private runtimeMode: 'live' | 'simulation' | 'blocked' | 'failed' | 'stopped' = 'stopped';
   private config: MinecraftServerConfig = {
     serverName: 'MISSI-Server',
@@ -21,6 +23,16 @@ export class MinecraftServerService {
       'spawn-protection': '0',
       'pvp': 'false',
     },
+  };
+
+  private runtimeConfig: MinecraftRuntimeConfig = {
+    acceptEula: false,
+    useEmulator: false,
+    javaPath: 'java',
+    jarPath: 'server.jar',
+    workingDir: 'minecraft-server',
+    maxMemory: '1024M',
+    minMemory: '1024M',
   };
 
   private worldBlocks: WorldBlock[] = [];
@@ -43,9 +55,24 @@ export class MinecraftServerService {
     try {
       const settings = SettingsService.getInstance();
       this.config = settings.getServerConfig();
+      this.runtimeConfig = settings.getRuntimeConfig();
       this.generateProceduralWorld();
     } catch (err) {
       // Ignored if SettingsService is not yet initialized (e.g. in tests)
+    }
+  }
+
+  public getRuntimeConfig(): MinecraftRuntimeConfig {
+    return this.runtimeConfig;
+  }
+
+  public async updateRuntimeConfig(newConfig: Partial<MinecraftRuntimeConfig>) {
+    this.runtimeConfig = { ...this.runtimeConfig, ...newConfig };
+    
+    try {
+      await SettingsService.getInstance().saveRuntimeConfig(this.runtimeConfig);
+    } catch (err) {
+      // Ignored in unit tests
     }
   }
 
@@ -152,17 +179,10 @@ export class MinecraftServerService {
       throw new Error('Server is already running or in transition.');
     }
 
-    this.status = 'starting';
-    this.addLog(`Starting Minecraft Java server: "${this.config.serverName}" on port ${this.config.port}...`);
-    this.addLog(`Level-Name: ${this.config.levelName} | Seed: ${this.config.seed}`);
-    this.addLog(`GameMode: ${this.config.gameMode} | Difficulty: ${this.config.difficulty}`);
+    this.status = 'validating';
+    this.runtimeMode = useEmulator ? 'simulation' : 'live';
 
-    const envEula = process.env.MISSI_ACCEPT_MINECRAFT_EULA === 'true';
-    if (!acceptEULA && !envEula && !useEmulator) {
-      this.status = 'blocked';
-      this.runtimeMode = 'blocked';
-      throw new Error('EULA_NOT_ACCEPTED: You must explicitly read and accept the Minecraft End User License Agreement (EULA) before starting a Minecraft Java server. Please tick the acceptance checkbox.');
-    }
+    this.addLog(`Validating environment for Minecraft Java server: "${this.config.serverName}" on port ${this.config.port}...`);
 
     if (useEmulator) {
       if (process.env.ALLOW_SIMULATION_MODE !== 'true') {
@@ -170,6 +190,7 @@ export class MinecraftServerService {
         this.runtimeMode = 'blocked';
         throw new Error('SIMULATION_MODE_DISABLED: Simulation mode is disabled. To enable, set ALLOW_SIMULATION_MODE=true in your environment.');
       }
+      this.status = 'starting';
       this.runtimeMode = 'simulation';
       this.addLog('Simulation Mode — Not Live Ready: Launching High-Fidelity Node-based Minecraft Simulation Emulator.');
       
@@ -189,32 +210,40 @@ export class MinecraftServerService {
     }
 
     // Real Java Server Startup Flow
-    let javaAvailable = false;
-    try {
-      const { execSync } = await import('child_process');
-      execSync('java -version', { stdio: 'ignore' });
-      javaAvailable = true;
-    } catch {
-      javaAvailable = false;
+    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
+    await fs.mkdir(serverDir, { recursive: true });
+
+    // If acceptEULA is true or env variable accepted, write eula=true immediately so preflight is passed
+    const envEula = process.env.MISSI_ACCEPT_MINECRAFT_EULA === 'true';
+    if (acceptEULA || envEula) {
+      await fs.writeFile(path.join(serverDir, 'eula.txt'), 'eula=true');
     }
 
-    if (!javaAvailable) {
+    // Run Preflight diagnostics
+    const preflight = MinecraftServerPreflightService.getInstance();
+    const report = await preflight.runPreflight();
+
+    if (!report.javaAvailable || !report.eulaAccepted || !report.jarExists) {
       this.status = 'blocked';
       this.runtimeMode = 'blocked';
-      this.addLog('[Console Error] BLOCKED: Java binary "java" not found in sandbox environment.');
-      this.addLog('[Console Guidance] To verify this outside AI Studio, install Java 17+ and execute:');
-      this.addLog('  MISSI_ACCEPT_MINECRAFT_EULA=true PORT=3000 npm run dev');
-      throw new Error('JAVA_NOT_FOUND: Java binary not found. Real Minecraft Java server execution is blocked. Please select the "Use Sandbox Emulator" option to proceed inside the sandbox environment (guarded by ALLOW_SIMULATION_MODE=true).');
+      this.addLog(`[Console Error] BLOCKED: Preflight checks failed: ${report.issues.join('; ')}`);
+      throw new Error(`PREFLIGHT_BLOCKED: ${report.issues.join('. ')}`);
     }
 
+    this.status = 'starting';
     this.runtimeMode = 'live';
-    this.addLog('Java runtime detected. Setting up real server directories and server.properties...');
-    await this.prepareRealServerFiles(acceptEULA || envEula);
+    this.addLog('Java runtime, EULA acceptance, and server.jar verified successfully.');
+    this.addLog(`Starting Minecraft Java server: "${this.config.serverName}" on port ${this.config.port}...`);
+    this.addLog(`Level-Name: ${this.config.levelName} | Seed: ${this.config.seed}`);
+    this.addLog(`GameMode: ${this.config.gameMode} | Difficulty: ${this.config.difficulty}`);
+
+    this.addLog('Setting up real server directories and server.properties...');
+    await this.prepareRealServerFiles(true);
     await this.launchRealJavaServer();
   }
 
   private async prepareRealServerFiles(accepted: boolean) {
-    const serverDir = path.resolve(process.cwd(), 'minecraft-server');
+    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
     await fs.mkdir(serverDir, { recursive: true });
 
     // 1. Write server.properties
@@ -240,14 +269,18 @@ export class MinecraftServerService {
   }
 
   private async launchRealJavaServer(): Promise<void> {
-    const serverDir = path.resolve(process.cwd(), 'minecraft-server');
-    const jarPath = path.join(serverDir, 'server.jar');
+    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
+    const javaBin = this.runtimeConfig.javaPath || 'java';
+    const jarName = this.runtimeConfig.jarPath || 'server.jar';
+    const jarPath = path.join(serverDir, jarName);
+    const maxMem = this.runtimeConfig.maxMemory || '1024M';
+    const minMem = this.runtimeConfig.minMemory || '1024M';
 
-    this.addLog(`Attempting to launch child process: java -Xmx1024M -Xms1024M -jar ${jarPath} nogui`);
+    this.addLog(`Attempting to launch child process: ${javaBin} -Xmx${maxMem} -Xms${minMem} -jar ${jarName} nogui`);
     
     try {
       await fs.access(jarPath);
-      this.serverProcess = spawn('java', ['-Xmx1024M', '-Xms1024M', '-jar', 'server.jar', 'nogui'], {
+      this.serverProcess = spawn(javaBin, [`-Xmx${maxMem}`, `-Xms${minMem}`, '-jar', jarName, 'nogui'], {
         cwd: serverDir,
       });
 
@@ -282,10 +315,11 @@ export class MinecraftServerService {
     } catch {
       this.status = 'blocked';
       this.runtimeMode = 'blocked';
-      this.addLog('[Console Error] BLOCKED: "server.jar" not found in minecraft-server/ directory.');
+      const wDir = this.runtimeConfig.workingDir || 'minecraft-server';
+      this.addLog(`[Console Error] BLOCKED: "${jarName}" not found in ${wDir}/ directory.`);
       this.addLog('[Console Guidance] Please download a valid Minecraft server.jar or check "Use Sandbox Emulator" in the server config panel.');
-      this.addLog('  To download: wget https://piston-data.mojang.com/v1/objects/84194a5c4d6da61663047990dec7177b3c2e4070/server.jar -O minecraft-server/server.jar');
-      throw new Error('SERVER_JAR_NOT_FOUND: "server.jar" not found at minecraft-server/server.jar. Real server execution is blocked.');
+      this.addLog(`  To download: wget https://piston-data.mojang.com/v1/objects/84194a5c4d6da61663047990dec7177b3c2e4070/server.jar -O ${wDir}/${jarName}`);
+      throw new Error(`SERVER_JAR_NOT_FOUND: "${jarName}" not found at ${wDir}/${jarName}. Real server execution is blocked.`);
     }
   }
 
@@ -326,35 +360,26 @@ export class MinecraftServerService {
       return;
     }
 
+    const policyRes = isCommandAllowed(command);
+    if (!policyRes.allowed) {
+      this.addLog(`[Console] ERROR: ${policyRes.reason}`);
+      return;
+    }
+
+    this.addLog(`[Console] Executing command: ${command}`);
+
     const sanitized = command.trim();
-    if (!sanitized.startsWith('/')) {
-      this.addLog(`[Console] ERROR: Commands must start with "/" (got: "${sanitized}").`);
-      return;
-    }
+    const cleanCommand = sanitized.startsWith('/') ? sanitized.slice(1) : sanitized;
+    const parts = cleanCommand.split(/\s+/);
+    const cmdName = parts[0].toLowerCase();
 
-    const baseCommand = sanitized.split(' ')[0].toLowerCase();
-    const whitelistedCommands = [
-      '/say', '/stop', '/seed', '/gamemode', '/difficulty',
-      '/help', '/teleport', '/tp', '/time', '/weather',
-      '/give', '/spawnpoint', '/op', '/deop', '/whitelist'
-    ];
-
-    if (!whitelistedCommands.includes(baseCommand)) {
-      this.addLog(`[Console] ERROR: Command "${baseCommand}" is not supported or is blocked for system safety. Whitelisted commands: ${whitelistedCommands.join(', ')}`);
-      return;
-    }
-
-    this.addLog(`[Console] Executing command: ${sanitized}`);
-
-    if (sanitized.startsWith('/say ')) {
-      const speech = sanitized.substring(5);
+    if (cmdName === 'say') {
+      const speech = parts.slice(1).join(' ');
       this.addLog(`[Chat] [Server] ${speech}`);
-    } else if (sanitized === '/stop') {
-      this.stopServer();
-    } else if (sanitized === '/seed') {
+    } else if (cmdName === 'seed') {
       this.addLog(`Current Seed: [${this.config.seed}]`);
     } else {
-      this.addLog(`Command executed successfully: ${sanitized}`);
+      this.addLog(`Command executed successfully: ${command}`);
     }
   }
 
