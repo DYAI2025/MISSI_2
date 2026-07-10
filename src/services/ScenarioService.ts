@@ -139,7 +139,7 @@ export class ScenarioService {
             id: `bot_${Math.random().toString(36).substr(2, 9)}`,
             name,
             role: 'Assistant',
-            goal: 'Survive and explore',
+            goal: '',
             providerId: 'gemini',
             model: 'gemini-3.5-flash',
             inventory: {},

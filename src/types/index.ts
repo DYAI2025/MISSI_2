@@ -170,8 +170,22 @@ export interface WorkspaceConfig {
 }
 
 export interface MinecraftRuntimeConfig {
-  acceptEula: boolean;
-  useEmulator: boolean;
+  javaExecutable: string;
+  serverJarPath: string;
+  workingDirectory: string;
+  minMemoryMb: number;
+  maxMemoryMb: number;
+  startupTimeoutMs: number;
+  stopTimeoutMs: number;
+  localOnly: boolean;
+  onlineMode: boolean;
+  eulaAccepted: boolean;
+  eulaAcceptedAt?: string;
+  minecraftVersion?: string;
+  host?: string;
+  // legacy aliases for migration
+  acceptEula?: boolean;
+  useEmulator?: boolean;
   javaPath?: string;
   jarPath?: string;
   workingDir?: string;

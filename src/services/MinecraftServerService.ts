@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getStoragePath } from '../config/storage-paths.js';
 import { MinecraftServerConfig, GameMode, Difficulty, WorldBlock, MinecraftRuntimeConfig } from '../types/index.js';
 import { SettingsService } from './SettingsService.js';
 import { isCommandAllowed } from '../domain/server/server-command-policy.js';
@@ -26,13 +27,17 @@ export class MinecraftServerService {
   };
 
   private runtimeConfig: MinecraftRuntimeConfig = {
-    acceptEula: false,
-    useEmulator: false,
-    javaPath: 'java',
-    jarPath: 'server.jar',
-    workingDir: 'minecraft-server',
-    maxMemory: '1024M',
-    minMemory: '1024M',
+    javaExecutable: 'java',
+    serverJarPath: 'server.jar',
+    workingDirectory: 'minecraft-server',
+    minMemoryMb: 1024,
+    maxMemoryMb: 1024,
+    startupTimeoutMs: 60000,
+    stopTimeoutMs: 15000,
+    localOnly: true,
+    onlineMode: false,
+    eulaAccepted: false,
+    minecraftVersion: '1.20.4'
   };
 
   private worldBlocks: WorldBlock[] = [];
@@ -210,10 +215,9 @@ export class MinecraftServerService {
     }
 
     // Real Java Server Startup Flow
-    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
+    const serverDir = getStoragePath(this.runtimeConfig.workingDirectory || 'minecraft-server');
     await fs.mkdir(serverDir, { recursive: true });
 
-    // If acceptEULA is true or env variable accepted, write eula=true immediately so preflight is passed
     const envEula = process.env.MISSI_ACCEPT_MINECRAFT_EULA === 'true';
     if (acceptEULA || envEula) {
       await fs.writeFile(path.join(serverDir, 'eula.txt'), 'eula=true');
@@ -223,19 +227,17 @@ export class MinecraftServerService {
     const preflight = MinecraftServerPreflightService.getInstance();
     const report = await preflight.runPreflight();
 
-    if (!report.javaAvailable || !report.eulaAccepted || !report.jarExists) {
+    if (!report.realServerReady) {
       this.status = 'blocked';
       this.runtimeMode = 'blocked';
-      this.addLog(`[Console Error] BLOCKED: Preflight checks failed: ${report.issues.join('; ')}`);
-      throw new Error(`PREFLIGHT_BLOCKED: ${report.issues.join('. ')}`);
+      this.addLog(`[Console Error] BLOCKED: Preflight checks failed: ${report.blockers.join(', ')}`);
+      throw new Error(`PREFLIGHT_BLOCKED: ${report.blockers.join(', ')}`);
     }
 
     this.status = 'starting';
     this.runtimeMode = 'live';
     this.addLog('Java runtime, EULA acceptance, and server.jar verified successfully.');
     this.addLog(`Starting Minecraft Java server: "${this.config.serverName}" on port ${this.config.port}...`);
-    this.addLog(`Level-Name: ${this.config.levelName} | Seed: ${this.config.seed}`);
-    this.addLog(`GameMode: ${this.config.gameMode} | Difficulty: ${this.config.difficulty}`);
 
     this.addLog('Setting up real server directories and server.properties...');
     await this.prepareRealServerFiles(true);
@@ -243,7 +245,7 @@ export class MinecraftServerService {
   }
 
   private async prepareRealServerFiles(accepted: boolean) {
-    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
+    const serverDir = getStoragePath(this.runtimeConfig.workingDirectory || 'minecraft-server');
     await fs.mkdir(serverDir, { recursive: true });
 
     // 1. Write server.properties
@@ -269,12 +271,12 @@ export class MinecraftServerService {
   }
 
   private async launchRealJavaServer(): Promise<void> {
-    const serverDir = path.resolve(process.cwd(), this.runtimeConfig.workingDir || 'minecraft-server');
-    const javaBin = this.runtimeConfig.javaPath || 'java';
-    const jarName = this.runtimeConfig.jarPath || 'server.jar';
+    const serverDir = getStoragePath(this.runtimeConfig.workingDirectory || 'minecraft-server');
+    const javaBin = this.runtimeConfig.javaExecutable || 'java';
+    const jarName = this.runtimeConfig.serverJarPath || 'server.jar';
     const jarPath = path.join(serverDir, jarName);
-    const maxMem = this.runtimeConfig.maxMemory || '1024M';
-    const minMem = this.runtimeConfig.minMemory || '1024M';
+    const maxMem = this.runtimeConfig.maxMemoryMb ? `${this.runtimeConfig.maxMemoryMb}M` : '1024M';
+    const minMem = this.runtimeConfig.minMemoryMb ? `${this.runtimeConfig.minMemoryMb}M` : '1024M';
 
     this.addLog(`Attempting to launch child process: ${javaBin} -Xmx${maxMem} -Xms${minMem} -jar ${jarName} nogui`);
     
@@ -324,8 +326,8 @@ export class MinecraftServerService {
   }
 
   public async stopServer(): Promise<void> {
-    if (this.status !== 'running') {
-      throw new Error('Server is not currently running.');
+    if (this.status !== 'running' && this.status !== 'starting') {
+      throw new Error('Server is not currently starting or running.');
     }
 
     this.status = 'stopping';
@@ -333,6 +335,8 @@ export class MinecraftServerService {
 
     if (this.runtimeMode === 'live' && this.serverProcess) {
       this.serverProcess.stdin?.write('stop\n');
+      
+      const timeoutMs = this.runtimeConfig.stopTimeoutMs || 15000;
       setTimeout(() => {
         if (this.serverProcess) {
           this.serverProcess.kill('SIGKILL');
@@ -340,7 +344,7 @@ export class MinecraftServerService {
           this.status = 'stopped';
           this.runtimeMode = 'stopped';
         }
-      }, 5000);
+      }, timeoutMs);
     } else {
       // simulated stop
       setTimeout(() => {

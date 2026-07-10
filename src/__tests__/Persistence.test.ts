@@ -7,9 +7,10 @@ import { BotProfileService } from '../services/BotProfileService.js';
 import { GameMode, Difficulty, LLMProviderType } from '../types/index.js';
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getStoragePath } from '../config/storage-paths.js';
 
 describe('MISSI Live Usability & Persistence Layer', () => {
-  const testDataDir = path.resolve(process.cwd(), 'data');
+  const testDataDir = getStoragePath('data');
 
   beforeEach(async () => {
     // Clear data directory or clean up before each run to ensure freshness

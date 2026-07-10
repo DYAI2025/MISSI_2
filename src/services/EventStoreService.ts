@@ -1,5 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
+import { getStoragePath } from '../config/storage-paths.js';
 import { EventLog, EventType, RunManifest, MinecraftServerConfig, Scenario } from '../types/index.js';
 
 function redactSecrets(data: any): any {
@@ -70,7 +71,7 @@ export class EventStoreService {
 
     // Pre-create runs directory and run-specific directory immediately, and save start files
     try {
-      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runsDir = getStoragePath('runs');
       const runDir = path.join(runsDir, runId);
       await fs.mkdir(runDir, { recursive: true });
 
@@ -138,7 +139,7 @@ export class EventStoreService {
     // Continuous file appending when a run is active
     if (this.currentRun) {
       const runId = this.currentRun.id;
-      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runsDir = getStoragePath('runs');
       const runDir = path.join(runsDir, runId);
 
       // Deeply redact secrets from nested data copied for events
@@ -220,7 +221,7 @@ export class EventStoreService {
 
   private async saveManifestToDisk(manifest: RunManifest) {
     try {
-      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runsDir = getStoragePath('runs');
       const runDir = path.join(runsDir, manifest.id);
       await fs.mkdir(runDir, { recursive: true });
 
@@ -398,7 +399,7 @@ export class EventStoreService {
 
   public async getCompletedRunsList(): Promise<{ id: string; startTime: string; scenarioTitle: string; status: string }[]> {
     try {
-      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runsDir = getStoragePath('runs');
       const items = await fs.readdir(runsDir, { withFileTypes: true });
       const list = [];
 
@@ -440,7 +441,7 @@ export class EventStoreService {
 
   public async getRunDetails(id: string): Promise<RunManifest | null> {
     try {
-      const runsDir = path.resolve(process.cwd(), 'runs');
+      const runsDir = getStoragePath('runs');
       
       // Try directory format first
       try {

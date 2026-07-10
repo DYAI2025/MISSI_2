@@ -27,7 +27,7 @@ export function validateBotProfile(profile: any): BotProfile {
   }
 
   const role = typeof profile.role === 'string' ? profile.role.trim() : 'Assistant';
-  const goal = typeof profile.goal === 'string' ? profile.goal.trim() : 'Survive and explore';
+  const goal = typeof profile.goal === 'string' ? profile.goal.trim() : '';
   const providerId = typeof profile.providerId === 'string' ? profile.providerId.trim() : 'gemini';
   const model = typeof profile.model === 'string' ? profile.model.trim() : 'gemini-2.5-flash';
   const characterPrompt = typeof profile.characterPrompt === 'string' ? profile.characterPrompt : '';

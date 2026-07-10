@@ -6,6 +6,7 @@ export class MineflayerBotAdapter {
 
   constructor(
     private name: string,
+    private host: string,
     private port: number,
     private onLog: (msg: string, isError?: boolean) => void
   ) {}
@@ -13,10 +14,10 @@ export class MineflayerBotAdapter {
   public connect(): Promise<boolean> {
     return new Promise((resolve) => {
       try {
-        this.onLog(`[Mineflayer Sockets] Initiating connection for "${this.name}" to 127.0.0.1:${this.port}...`);
+        this.onLog(`[Mineflayer Sockets] Initiating connection for "${this.name}" to ${this.host}:${this.port}...`);
         
         this.bot = mineflayer.createBot({
-          host: '127.0.0.1',
+          host: this.host,
           port: this.port,
           username: this.name,
           version: '1.20',

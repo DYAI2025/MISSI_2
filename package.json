@@ -16,6 +16,8 @@
     "missi:verify:sprint5": "tsx scripts/verify-sprint-5.ts",
     "missi:verify:sprint6": "tsx scripts/verify-sprint-6.ts",
     "missi:verify:sprint7": "tsx scripts/verify-sprint-7.ts",
+    "missi:verify:sprint8": "tsx scripts/verify-sprint-8.ts",
+    "missi:verify:railway": "tsx scripts/verify-railway-deploy.ts",
     "missi:smoke:server": "tsx scripts/smoke-server.ts",
     "missi:smoke:provider": "tsx scripts/smoke-provider.ts",
     "missi:smoke:bot": "tsx scripts/smoke-bot.ts",

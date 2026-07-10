@@ -41,12 +41,18 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
 
   // Preflight Report states
   const [preflightReport, setPreflightReport] = useState<{
-    javaAvailable: boolean;
-    eulaAccepted: boolean;
-    jarExists: boolean;
-    issues: string[];
-    ready: boolean;
-    status: 'ready' | 'blocked';
+    realServerReady: boolean;
+    simulationAvailable: boolean;
+    checks: { id: string; status: 'passed' | 'failed'; message: string; }[];
+    blockers: string[];
+    warnings: string[];
+    // legacy fields
+    javaAvailable?: boolean;
+    eulaAccepted?: boolean;
+    jarExists?: boolean;
+    issues?: string[];
+    ready?: boolean;
+    status?: 'ready' | 'blocked';
   } | null>(null);
   const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
 
@@ -75,11 +81,11 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       const res = await fetch('/api/server/runtime-config');
       if (res.ok) {
         const data = await res.json();
-        setJavaPath(data.javaPath || 'java');
-        setJarPath(data.jarPath || 'server.jar');
-        setWorkingDir(data.workingDir || 'minecraft-server');
-        setMaxMemory(data.maxMemory || '1024M');
-        setMinMemory(data.minMemory || '1024M');
+        setJavaPath(data.javaExecutable || 'java');
+        setJarPath(data.serverJarPath || 'server.jar');
+        setWorkingDir(data.workingDirectory || 'minecraft-server');
+        setMaxMemory(data.maxMemoryMb ? `${data.maxMemoryMb}M` : '1024M');
+        setMinMemory(data.minMemoryMb ? `${data.minMemoryMb}M` : '1024M');
       }
     } catch (err) {
       console.warn('Failed to fetch runtime config:', err);
@@ -94,7 +100,13 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       const res = await fetch('/api/server/runtime-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ javaPath, jarPath, workingDir, maxMemory, minMemory }),
+        body: JSON.stringify({ 
+          javaExecutable: javaPath, 
+          serverJarPath: jarPath, 
+          workingDirectory: workingDir, 
+          maxMemoryMb: parseInt(maxMemory.replace(/\D/g, '') || '1024'), 
+          minMemoryMb: parseInt(minMemory.replace(/\D/g, '') || '1024') 
+        }),
       });
       if (res.ok) {
         setRuntimeSaveMessage('Java Settings Saved');
@@ -155,6 +167,26 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       setIsDeletingWorld(false);
     }
   };
+
+  const [serverLogs, setServerLogs] = useState<string[]>([]);
+
+  useEffect(() => {
+    let logInterval: NodeJS.Timeout;
+    if (serverStatus === 'starting' || serverStatus === 'running' || serverStatus === 'stopping') {
+      logInterval = setInterval(async () => {
+        try {
+          const res = await fetch('/api/server/logs');
+          if (res.ok) {
+            const data = await res.json();
+            setServerLogs(data.logs);
+          }
+        } catch (err) {
+          console.warn('Failed to fetch server logs:', err);
+        }
+      }, 2000);
+    }
+    return () => clearInterval(logInterval);
+  }, [serverStatus]);
 
   // Synchronize config prop with local editing states
   useEffect(() => {
@@ -286,7 +318,12 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
       setPreflightReport(report);
 
       // 2. Conditionally execute only if ready is true
-      if (!report.ready) {
+      let isReady = report.realServerReady;
+      if (!isReady && acceptEULA && report.blockers.length === 1 && report.blockers.includes('eula')) {
+        isReady = true;
+      }
+      
+      if (!isReady && !useEmulator) {
         throw new Error('Server cannot start: preflight diagnostics failed. Please make sure Java executables, server JARs, working directories, and Minecraft EULA acceptance are configured and valid.');
       }
 
@@ -824,6 +861,22 @@ export const ServerConfigCard: React.FC<ServerConfigCardProps> = ({
               Send
             </button>
           </form>
+        </div>
+      )}
+
+      {(serverStatus === 'starting' || serverStatus === 'running' || serverStatus === 'stopping') && (
+        <div className="mt-4 border border-brand-border bg-black/40">
+          <div className="flex items-center gap-2 p-2 border-b border-brand-border bg-brand-card">
+            <Activity className="w-4 h-4 text-brand-muted" />
+            <h3 className="text-[10px] font-mono uppercase tracking-widest text-brand-muted font-bold">Server Output Console</h3>
+          </div>
+          <div className="h-48 overflow-y-auto p-2 font-mono text-[10px] leading-relaxed text-brand-muted scrollbar-thin scrollbar-thumb-brand-border flex flex-col-reverse">
+            <div>
+              {serverLogs.map((log, idx) => (
+                <div key={idx} className="whitespace-pre-wrap break-words">{log}</div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 

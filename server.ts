@@ -3,6 +3,8 @@ import path from 'path';
 import { promises as fs } from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { fileURLToPath } from 'url';
+import { getHttpRuntimeConfig } from './src/config/http-runtime.js';
+import { getStorageRoot, ensureStoragePathSync } from './src/config/storage-paths.js';
 import { MinecraftServerService } from './src/services/MinecraftServerService.js';
 import { MinecraftServerPreflightService } from './src/services/MinecraftServerPreflightService.js';
 import { ScenarioService } from './src/services/ScenarioService.js';
@@ -28,7 +30,19 @@ try {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const httpConfig = getHttpRuntimeConfig();
+  const PORT = httpConfig.port;
+  const HOST = httpConfig.host;
+
+  // Health Endpoint
+  app.get('/health', (req, res) => {
+    res.json({
+      status: 'healthy',
+      service: 'missi',
+      timestamp: new Date().toISOString(),
+      version: process.env.npm_package_version || 'unknown'
+    });
+  });
 
   // Standard Middlewares
   app.use(express.json());
@@ -202,10 +216,15 @@ async function startServer() {
   app.post('/api/server/start', async (req, res) => {
     try {
       const { acceptEULA, useEmulator } = req.body;
+      // Start is asynchronous and doesn't block until running, it just spawns
       await serverService.startServer(!!acceptEULA, !!useEmulator);
-      res.json({ success: true });
+      res.status(202).json({ success: true, status: 'starting' });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (err.message.includes('PREFLIGHT_BLOCKED')) {
+        res.status(403).json({ error: err.message, status: 'blocked' });
+      } else {
+        res.status(500).json({ error: err.message });
+      }
     }
   });
 
@@ -418,6 +437,14 @@ async function startServer() {
     try {
       await serverService.stopServer();
       res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/server/logs', async (req, res) => {
+    try {
+      res.json({ logs: serverService.getLogs() });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -724,6 +751,42 @@ async function startServer() {
     }
   });
 
+  app.get('/api/storage/status', async (req, res) => {
+    try {
+      const storageRoot = getStorageRoot();
+      const isPersistentExpected = !!process.env.MISSI_STORAGE_ROOT;
+      let exists = false;
+      let writable = false;
+      const warnings: string[] = [];
+
+      if (!isPersistentExpected) {
+        warnings.push('MISSI_STORAGE_ROOT is not set. Data may not persist across restarts without a mounted volume.');
+      }
+
+      try {
+        ensureStoragePathSync(''); // creates if missing
+        exists = true;
+        // Check writable by writing a small test file
+        const testFile = path.join(storageRoot, '.write-test');
+        await fs.writeFile(testFile, 'test');
+        await fs.unlink(testFile);
+        writable = true;
+      } catch (err: any) {
+        warnings.push(`Storage access error: ${err.message}`);
+      }
+
+      res.json({
+        storageRoot,
+        exists,
+        writable,
+        persistentVolumeExpected: isPersistentExpected,
+        warnings
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   /**
    * Server config GET/PUT
    */
@@ -919,8 +982,8 @@ async function startServer() {
   }
 
   // Start Listener
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`MISSI running on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`MISSI running on http://${HOST}:${PORT}`);
   });
 }
 

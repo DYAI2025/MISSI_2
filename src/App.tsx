@@ -208,7 +208,12 @@ export default function App() {
       const preflightRes = await fetch('/api/server/preflight');
       if (preflightRes.ok) {
         const report = await preflightRes.json();
-        if (!report.ready) {
+        let isReady = report.realServerReady;
+        if (!isReady && acceptEULA && report.blockers.length === 1 && report.blockers.includes('eula')) {
+          isReady = true;
+        }
+
+        if (!isReady && !useEmulator) {
           throw new Error('Server preflight check is not passing. Please make sure Java executables, server JARs, working directories, and Minecraft EULA acceptance are configured and valid.');
         }
       }

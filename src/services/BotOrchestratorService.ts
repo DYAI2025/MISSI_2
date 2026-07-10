@@ -148,6 +148,9 @@ export class BotOrchestratorService {
     this.currentStep = 0;
 
     const serverPort = serverService.getConfig().port || 25565;
+    const settings = SettingsService.getInstance();
+    const runtimeConfig = settings.getRuntimeConfig();
+    const serverHost = runtimeConfig?.host || '127.0.0.1';
 
     // Log connection sequence and attempt real Mineflayer socket joins
     for (const bot of this.activeBots) {
@@ -161,6 +164,7 @@ export class BotOrchestratorService {
       // Create and connect a real Mineflayer client adapter
       const adapter = new MineflayerBotAdapter(
         bot.name,
+        serverHost,
         serverPort,
         (msg, isError) => {
           eventStore.addEvent(

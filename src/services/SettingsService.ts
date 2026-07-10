@@ -138,13 +138,25 @@ export class SettingsService {
 
     // 4. Runtime config
     const defaultRuntime: MinecraftRuntimeConfig = {
+      javaExecutable: 'java',
+      serverJarPath: 'server.jar',
+      workingDirectory: 'minecraft-server',
+      minMemoryMb: 1024,
+      maxMemoryMb: 1024,
+      startupTimeoutMs: 60000,
+      stopTimeoutMs: 15000,
+      localOnly: true,
+      onlineMode: false,
+      eulaAccepted: false,
+      minecraftVersion: '1.20.4',
+      // backward compatibility fields temporarily populated
       acceptEula: false,
       useEmulator: false,
       javaPath: 'java',
       jarPath: 'server.jar',
       workingDir: 'minecraft-server',
-      maxMemory: '1024M',
       minMemory: '1024M',
+      maxMemory: '1024M'
     };
     const loadedRuntime = await this.persistence.readJson<Partial<MinecraftRuntimeConfig>>(this.runtimeConfigPath, {});
     this.cachedRuntimeConfig = { ...defaultRuntime, ...loadedRuntime };
