@@ -10,7 +10,7 @@ export class LLMProviderService {
     systemInstruction: string,
     prompt: string,
     responseSchema?: any
-  ): Promise<{ rationale: string; action: string; parameters: any; message?: string }> {
+  ): Promise<{ reason_summary?: string; rationale?: string; action: string; parameters: any; message?: string }> {
     
     // Select correct provider execution path
     switch (provider.type) {
@@ -378,17 +378,28 @@ export class LLMProviderService {
   public static classifyError(err: any, provider: LLMProviderConfig): {
     code:
       | 'missing_key'
-      | 'invalid_key'
+      | 'bad_request'
+      | 'unauthorized'
       | 'unreachable'
-      | 'timeout'
-      | 'rate_limited'
-      | 'invalid_model'
-      | 'invalid_response'
-      | 'parse_error'
+      | 'quota_exceeded'
       | 'unknown_provider_error';
     message: string;
   } {
-    const msg = (err.message || String(err)).trim();
+    let msg = (err.message || String(err)).trim();
+
+    // Redact the specific apiKey if configured
+    if (provider?.apiKey) {
+      const escapedKey = provider.apiKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (escapedKey.length > 3) {
+        const regex = new RegExp(escapedKey, 'gi');
+        msg = msg.replace(regex, '[REDACTED_API_KEY]');
+      }
+    }
+
+    // Also redact general patterns resembling high-entropy credentials/keys
+    msg = msg.replace(/(AIzaSy[A-Za-z0-9_-]{33})/g, '[REDACTED_GEMINI_KEY]');
+    msg = msg.replace(/(sk-[A-Za-z0-9]{32,})/g, '[REDACTED_OPENAI_KEY]');
+
     const lower = msg.toLowerCase();
 
     // 1. Missing API Key
@@ -402,24 +413,7 @@ export class LLMProviderService {
       return { code: 'missing_key', message: msg };
     }
 
-    // 2. Unreachable / network
-    if (
-      lower.includes('fetch failed') ||
-      lower.includes('econnrefused') ||
-      lower.includes('enotfound') ||
-      lower.includes('unreachable') ||
-      lower.includes('offline or unreachable') ||
-      lower.includes('network error')
-    ) {
-      return { code: 'unreachable', message: msg };
-    }
-
-    // 3. Timeout
-    if (lower.includes('timeout') || lower.includes('timed out') || lower.includes('etimedout')) {
-      return { code: 'timeout', message: msg };
-    }
-
-    // 4. Invalid key (401 or 403)
+    // 2. Unauthorized (401 or 403 or invalid credentials)
     if (
       lower.includes('401') ||
       lower.includes('403') ||
@@ -427,37 +421,57 @@ export class LLMProviderService {
       lower.includes('forbidden') ||
       lower.includes('invalid api key') ||
       lower.includes('invalid_api_key') ||
-      lower.includes('key is invalid')
+      lower.includes('key is invalid') ||
+      lower.includes('invalid credentials')
     ) {
-      return { code: 'invalid_key', message: msg };
+      return { code: 'unauthorized', message: msg };
     }
 
-    // 5. Rate limited (429)
+    // 3. Quota Exceeded (429 or rate limits)
     if (
       lower.includes('429') ||
       lower.includes('too many requests') ||
       lower.includes('rate limit') ||
-      lower.includes('quota exceeded')
+      lower.includes('quota exceeded') ||
+      lower.includes('resource exhausted') ||
+      lower.includes('resource_exhausted')
     ) {
-      return { code: 'rate_limited', message: msg };
+      return { code: 'quota_exceeded', message: msg };
     }
 
-    // 6. Invalid Model
+    // 4. Unreachable / Networks / Timeouts
+    if (
+      lower.includes('fetch failed') ||
+      lower.includes('econnrefused') ||
+      lower.includes('enotfound') ||
+      lower.includes('unreachable') ||
+      lower.includes('offline or unreachable') ||
+      lower.includes('network error') ||
+      lower.includes('timeout') ||
+      lower.includes('timed out') ||
+      lower.includes('etimedout') ||
+      lower.includes('dns')
+    ) {
+      return { code: 'unreachable', message: msg };
+    }
+
+    // 5. Bad Request (Invalid parameter, invalid model, parsing, structure mismatch)
     if (
       lower.includes('model not found') ||
       lower.includes('invalid_model') ||
       lower.includes('unsupported model') ||
-      (lower.includes('not found') && lower.includes('model'))
+      (lower.includes('not found') && lower.includes('model')) ||
+      lower.includes('invalid parameters') ||
+      lower.includes('bad request') ||
+      lower.includes('400') ||
+      lower.includes('json') ||
+      lower.includes('unexpected response') ||
+      lower.includes('parse')
     ) {
-      return { code: 'invalid_model', message: msg };
+      return { code: 'bad_request', message: msg };
     }
 
-    // 7. Parse error or invalid response
-    if (lower.includes('json') || lower.includes('unexpected response') || lower.includes('parse')) {
-      return { code: 'parse_error', message: msg };
-    }
-
-    // 8. Default
+    // 6. Default
     return { code: 'unknown_provider_error', message: msg };
   }
 }

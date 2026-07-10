@@ -15,8 +15,15 @@ export class ScenarioService {
     const bots: BotConfig[] = [];
     const worldConfig: { seed?: string; gameMode?: string; game_mode?: string; difficulty?: string; port?: number; levelName?: string; level_name?: string; properties?: Record<string, string> } = {};
 
-    let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'scenario_prompt' | 'none' = 'meta';
+    let currentSection: 'meta' | 'objectives' | 'bots' | 'world_config' | 'scenario_prompt' | 'research' | 'none' = 'meta';
     let currentBot: Partial<BotConfig> | null = null;
+    const research: {
+      question?: string;
+      hypothesis?: string;
+      measurementFocus?: string[];
+      observationProtocol?: string;
+      expectedEmergencePatterns?: string[];
+    } = {};
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -44,6 +51,11 @@ export class ScenarioService {
 
       if (line.startsWith('## Objectives')) {
         currentSection = 'objectives';
+        continue;
+      }
+
+      if (line.startsWith('## Research')) {
+        currentSection = 'research';
         continue;
       }
 
@@ -95,6 +107,26 @@ export class ScenarioService {
         const itemMatch = line.match(/^[-*+]\s+(.*)$/) || line.match(/^\d+\.\s+(.*)$/);
         if (itemMatch) {
           objectives.push(itemMatch[1].trim());
+        }
+      } else if (currentSection === 'research') {
+        const questionMatch = line.match(/^[-*+=\d.]*\s*(Question|question)\s*[:=]\s*(.*)$/i);
+        const hypothesisMatch = line.match(/^[-*+=\d.]*\s*(Hypothesis|hypothesis)\s*[:=]\s*(.*)$/i);
+        const focusMatch = line.match(/^[-*+=\d.]*\s*(Measurement\s*Focus|measurement_focus)\s*[:=]\s*(.*)$/i);
+        const protocolMatch = line.match(/^[-*+=\d.]*\s*(Observation\s*Protocol|observation_protocol)\s*[:=]\s*(.*)$/i);
+        const emergenceMatch = line.match(/^[-*+=\d.]*\s*(Expected\s*Emergence\s*Patterns|expected_emergence_patterns)\s*[:=]\s*(.*)$/i);
+
+        if (questionMatch) {
+          research.question = questionMatch[2].trim();
+        } else if (hypothesisMatch) {
+          research.hypothesis = hypothesisMatch[2].trim();
+        } else if (focusMatch) {
+          const focusStr = focusMatch[2].trim();
+          research.measurementFocus = focusStr.split(',').map(f => f.trim()).filter(Boolean);
+        } else if (protocolMatch) {
+          research.observationProtocol = protocolMatch[2].trim();
+        } else if (emergenceMatch) {
+          const emergenceStr = emergenceMatch[2].trim();
+          research.expectedEmergencePatterns = emergenceStr.split(',').map(e => e.trim()).filter(Boolean);
         }
       } else if (currentSection === 'bots') {
         // Checking for a new bot header
@@ -186,6 +218,7 @@ export class ScenarioService {
       scenarioPrompt: finalPrompt,
       scenario_prompt: finalPrompt,
       worldConfig: Object.keys(worldConfig).length > 0 ? worldConfig : undefined,
+      research: Object.keys(research).length > 0 ? research : undefined,
     };
   }
 

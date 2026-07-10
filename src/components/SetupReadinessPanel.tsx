@@ -75,14 +75,24 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
   const isJavaAvailable = runtimeMode === 'java-server' && serverStatus !== 'blocked';
   
   // Compute overall readiness status
-  let readinessState: 'blocked' | 'needs_attention' | 'not_live_ready' | 'ready_to_configure' | 'live_ready' = 'blocked';
+  let readinessState: 'blocked' | 'needs_attention' | 'not_live_ready' | 'ready_to_configure' | 'workspace_ready' | 'ready_for_live_boundary_smoke' = 'blocked';
   let readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
   let readinessLabel = 'Blocked / Not Ready';
   let readinessExplanation = 'No active scenario or active provider loaded.';
 
   const providerTestStatus = activeProviderObj?.lastTest?.status || 'untested';
 
-  if (!isLLMConfigured) {
+  if (!hasActiveScenario) {
+    readinessState = 'blocked';
+    readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
+    readinessLabel = 'Blocked: Scenario Missing';
+    readinessExplanation = 'No active scenario template has been selected. Please load or create a scenario to begin.';
+  } else if (selectedBotIds.length === 0) {
+    readinessState = 'blocked';
+    readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
+    readinessLabel = 'Blocked: No Bots Selected';
+    readinessExplanation = 'No bot profiles have been selected for this workspace. Please select participating bots below.';
+  } else if (!isLLMConfigured) {
     readinessState = 'blocked';
     readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
     readinessLabel = 'Blocked: Credentials Missing';
@@ -92,39 +102,26 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
     readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
     readinessLabel = 'Blocked: Connection Failed';
     readinessExplanation = `LLM test failed with error: ${activeProviderObj?.lastTest?.message || 'unknown error'}. Check API key and network connection.`;
-  } else if (!hasActiveScenario) {
-    readinessState = 'ready_to_configure';
-    readinessColor = 'text-blue-500 bg-blue-500/10 border-blue-500/20';
-    readinessLabel = 'Ready to Configure';
-    readinessExplanation = 'No active scenario template has been selected. Please load or create a scenario to begin.';
   } else if (providerTestStatus === 'untested') {
     readinessState = 'needs_attention';
     readinessColor = 'text-orange-500 bg-orange-500/10 border-orange-500/20';
     readinessLabel = 'Needs Attention: Untested LLM';
     readinessExplanation = 'LLM is configured, but the connection has not been tested. Please click "Test Connection" to verify.';
-  } else if (selectedBotIds.length === 0) {
-    readinessState = 'needs_attention';
-    readinessColor = 'text-orange-500 bg-orange-500/10 border-orange-500/20';
-    readinessLabel = 'Needs Attention: No Bots';
-    readinessExplanation = 'No bot profiles have been selected for this workspace. Please select participating bots below.';
+  } else if (!isJavaAvailable || serverStatus === 'blocked') {
+    readinessState = 'not_live_ready';
+    readinessColor = 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
+    readinessLabel = 'Not Live Ready';
+    readinessExplanation = 'The real Minecraft Java server environment is currently offline or unavailable.';
+  } else if (allowSimulationMode) {
+    readinessState = 'not_live_ready';
+    readinessColor = 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
+    readinessLabel = 'Not Live Ready (Simulation Mode)';
+    readinessExplanation = 'The workspace is configured for simulation/sandbox mode. Live Minecraft E2E execution is not fully verified.';
   } else {
-    // LLM test passed, active scenario loaded, bots selected
-    if (serverStatus === 'running' && isJavaAvailable) {
-      readinessState = 'live_ready';
-      readinessColor = 'text-brand-green bg-brand-green/10 border-brand-green/20';
-      readinessLabel = 'Live Ready (Host Connected)';
-      readinessExplanation = 'Verified! A real Minecraft server is running, LLM provider test passed, and bots are configured.';
-    } else if (allowSimulationMode) {
-      readinessState = 'not_live_ready';
-      readinessColor = 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
-      readinessLabel = 'Simulation Ready (Not Live Ready)';
-      readinessExplanation = 'LLM is verified and the sandbox emulator is active. Click Run Simulation to begin. Real Minecraft Java server environment is currently unavailable.';
-    } else {
-      readinessState = 'blocked';
-      readinessColor = 'text-red-500 bg-red-500/10 border-red-500/20';
-      readinessLabel = 'Blocked: Java Offline';
-      readinessExplanation = 'Simulation sandbox is disabled, and the real Minecraft Java server environment is currently unavailable.';
-    }
+    readinessState = 'ready_for_live_boundary_smoke';
+    readinessColor = 'text-brand-green bg-brand-green/10 border-brand-green/20';
+    readinessLabel = 'Ready for Live Boundary Smoke';
+    readinessExplanation = 'Verified workspace! LLM provider test passed, bots selected, and active scenario is applied. Ready for live boundary verification.';
   }
 
   const handleTestProvider = async (pId: string) => {
@@ -157,8 +154,6 @@ export const SetupReadinessPanel: React.FC<SetupReadinessPanelProps> = ({
           ? 'bg-red-500/5 border-red-500/10 text-red-400'
           : readinessState === 'needs_attention'
           ? 'bg-orange-500/5 border-orange-500/10 text-orange-400'
-          : readinessState === 'ready_to_configure'
-          ? 'bg-blue-500/5 border-blue-500/10 text-blue-400'
           : readinessState === 'not_live_ready'
           ? 'bg-yellow-500/5 border-yellow-500/10 text-yellow-400'
           : 'bg-brand-green/5 border-brand-green/10 text-brand-green-light'

@@ -11,8 +11,64 @@ import {
   BookOpen, 
   Edit, 
   Trash2, 
-  Check 
+  Check,
+  Download
 } from 'lucide-react';
+
+function convertScenarioToMarkdown(scenario: Scenario): string {
+  let md = `# Scenario: ${scenario.title || 'Imported Scenario'}\n\n`;
+  md += `${scenario.description || 'A simulation run.'}\n\n`;
+  if (scenario.version) {
+    md += `Version: ${scenario.version}\n\n`;
+  }
+  if (scenario.scenarioPrompt || scenario.scenario_prompt) {
+    md += `## Scenario Prompt\n${scenario.scenarioPrompt || scenario.scenario_prompt}\n\n`;
+  }
+  if (scenario.worldConfig) {
+    md += `## World Configuration\n`;
+    if (scenario.worldConfig.seed) md += `- Seed: ${scenario.worldConfig.seed}\n`;
+    if (scenario.worldConfig.gameMode || scenario.worldConfig.game_mode) md += `- GameMode: ${scenario.worldConfig.gameMode || scenario.worldConfig.game_mode}\n`;
+    if (scenario.worldConfig.difficulty) md += `- Difficulty: ${scenario.worldConfig.difficulty}\n`;
+    if (scenario.worldConfig.port) md += `- Port: ${scenario.worldConfig.port}\n`;
+    if (scenario.worldConfig.levelName || scenario.worldConfig.level_name) md += `- LevelName: ${scenario.worldConfig.levelName || scenario.worldConfig.level_name}\n`;
+    md += `\n`;
+  }
+  if (scenario.objectives && scenario.objectives.length > 0) {
+    md += `## Objectives\n`;
+    scenario.objectives.forEach(obj => {
+      md += `- ${obj}\n`;
+    });
+    md += `\n`;
+  }
+  if (scenario.research) {
+    md += `## Research\n`;
+    if (scenario.research.question) md += `- Question: ${scenario.research.question}\n`;
+    if (scenario.research.hypothesis) md += `- Hypothesis: ${scenario.research.hypothesis}\n`;
+    if (scenario.research.measurementFocus) md += `- Measurement Focus: ${scenario.research.measurementFocus.join(', ')}\n`;
+    if (scenario.research.observationProtocol) md += `- Observation Protocol: ${scenario.research.observationProtocol}\n`;
+    if (scenario.research.expectedEmergencePatterns) md += `- Expected Emergence Patterns: ${scenario.research.expectedEmergencePatterns.join(', ')}\n`;
+    md += `\n`;
+  }
+  if (scenario.bots && scenario.bots.length > 0) {
+    md += `## Bots\n`;
+    scenario.bots.forEach(bot => {
+      md += `### Bot: ${bot.name}\n`;
+      md += `- Role: ${bot.role}\n`;
+      md += `- Goal: ${bot.goal}\n`;
+      md += `- Provider: ${bot.providerId}\n`;
+      md += `- Model: ${bot.model}\n`;
+      md += `- Position: ${bot.x}, ${bot.y}, ${bot.z}\n`;
+      if (bot.inventory && Object.keys(bot.inventory).length > 0) {
+        const invStr = Object.entries(bot.inventory).map(([item, qty]) => `${item}:${qty}`).join(', ');
+        md += `- Inventory: ${invStr}\n`;
+      }
+      if (bot.characterPrompt || bot.character_prompt) md += `- Character Prompt: ${bot.characterPrompt || bot.character_prompt}\n`;
+      if (bot.behaviorPrompt || bot.behavior_prompt) md += `- Behavior Prompt: ${bot.behaviorPrompt || bot.behavior_prompt}\n`;
+      md += `\n`;
+    });
+  }
+  return md;
+}
 
 export type ScenarioItem = ScenarioV2;
 
@@ -226,6 +282,120 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
     setError(null);
   };
 
+  const handleFileImportContent = async (content: string) => {
+    setError(null);
+    setCurrentScenarioId(null);
+    setLastSavedMarkdown(''); // Mark as unsaved
+    
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      // It's likely JSON!
+      setIsParsing(true);
+      try {
+        const json = JSON.parse(trimmed);
+        
+        let targetMarkdown = '';
+        let scenarioToUse: Scenario | null = null;
+        
+        if (json.originalMarkdown !== undefined) {
+          targetMarkdown = json.originalMarkdown;
+          scenarioToUse = json.parsedScenario || null;
+        } else if (json.title && (json.bots || json.objectives)) {
+          // It's a raw Scenario object!
+          scenarioToUse = json;
+          targetMarkdown = convertScenarioToMarkdown(json);
+        } else {
+          throw new Error('Invalid JSON structure: Must contain originalMarkdown or Scenario fields (title, objectives, bots).');
+        }
+        
+        setMarkdown(targetMarkdown);
+        if (scenarioToUse) {
+          setParsedScenario(scenarioToUse);
+        } else {
+          const parsed = await onParseScenario(targetMarkdown);
+          setParsedScenario(parsed);
+        }
+      } catch (err: any) {
+        setError('JSON Import Error: ' + (err.message || 'Malformed JSON file.'));
+        setParsedScenario(null);
+      } finally {
+        setIsParsing(false);
+      }
+    } else {
+      // It's standard Markdown/text!
+      setMarkdown(content);
+      setIsParsing(true);
+      try {
+        const scenario = await onParseScenario(content);
+        if (scenario) {
+          setParsedScenario(scenario);
+        }
+      } catch (err: any) {
+        setError(err.message || 'Failed to parse scenario markdown.');
+        setParsedScenario(null);
+      } finally {
+        setIsParsing(false);
+      }
+    }
+  };
+
+  const handleExportJSON = () => {
+    if (!parsedScenario) {
+      setError('Cannot export: Please parse the scenario markdown successfully first.');
+      return;
+    }
+    
+    try {
+      const exportPackage = {
+        version: 'missi-scenario-v1',
+        title: parsedScenario.title,
+        description: parsedScenario.description,
+        originalMarkdown: markdown,
+        parsedScenario: parsedScenario,
+        exportedAt: new Date().toISOString()
+      };
+      
+      const blob = new Blob([JSON.stringify(exportPackage, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const filename = `${parsedScenario.title.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_scenario.json`;
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError('Export failed: ' + err.message);
+    }
+  };
+
+  const handleExportLibraryScenario = (item: ScenarioItem) => {
+    try {
+      const exportPackage = {
+        version: 'missi-scenario-v1',
+        title: item.title,
+        description: item.description,
+        originalMarkdown: item.originalMarkdown,
+        parsedScenario: item.parsedScenario,
+        exportedAt: new Date().toISOString()
+      };
+      
+      const blob = new Blob([JSON.stringify(exportPackage, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const filename = `${item.title.toLowerCase().replace(/[^a-z0-9_-]/g, '_')}_scenario.json`;
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError('Export failed: ' + err.message);
+    }
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
@@ -244,22 +414,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
       reader.onload = async (event) => {
         if (event.target?.result) {
           const content = event.target.result as string;
-          setMarkdown(content);
-          setCurrentScenarioId(null);
-          setLastSavedMarkdown(''); // Mark as unsaved
-          setError(null);
-          setIsParsing(true);
-          try {
-            const scenario = await onParseScenario(content);
-            if (scenario) {
-              setParsedScenario(scenario);
-            }
-          } catch (err: any) {
-            setError(err.message || 'Failed to parse scenario markdown.');
-            setParsedScenario(null);
-          } finally {
-            setIsParsing(false);
-          }
+          await handleFileImportContent(content);
         }
       };
       reader.readAsText(file);
@@ -273,22 +428,7 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
       reader.onload = async (event) => {
         if (event.target?.result) {
           const content = event.target.result as string;
-          setMarkdown(content);
-          setCurrentScenarioId(null);
-          setLastSavedMarkdown(''); // Mark as unsaved
-          setError(null);
-          setIsParsing(true);
-          try {
-            const scenario = await onParseScenario(content);
-            if (scenario) {
-              setParsedScenario(scenario);
-            }
-          } catch (err: any) {
-            setError(err.message || 'Failed to parse scenario markdown.');
-            setParsedScenario(null);
-          } finally {
-            setIsParsing(false);
-          }
+          await handleFileImportContent(content);
         }
       };
       reader.readAsText(file);
@@ -459,15 +599,15 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                     type="file"
                     ref={fileInputRef}
                     onChange={handleFileUpload}
-                    accept=".md,.txt"
+                    accept=".md,.txt,.json"
                     className="hidden"
                   />
                   <Upload className="w-5 h-5 text-brand-muted group-hover:text-brand-green mb-1.5 group-hover:scale-110 transition-all duration-200" />
                   <div className="text-[10px] font-mono font-bold text-brand-text uppercase tracking-wider mb-0.5">
-                    Drag & Drop Scenario File
+                    Drag & Drop Scenario (MD, TXT, JSON)
                   </div>
                   <div className="text-[9px] font-mono text-brand-muted">
-                    or click to browse (.md, .txt)
+                    or click to browse (.md, .txt, .json)
                   </div>
                 </div>
               </div>
@@ -530,6 +670,14 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                   >
                     <Sparkles className="w-3.5 h-3.5 text-brand-muted" />
                     {isParsing ? 'Parsing...' : 'Parse Source'}
+                  </button>
+                  <button
+                    onClick={handleExportJSON}
+                    disabled={!parsedScenario || isSaving || isParsing}
+                    className="flex items-center gap-1.5 text-[11px] font-mono font-bold uppercase px-3 py-1.5 rounded-none bg-brand-green/10 text-brand-green border border-brand-green/30 hover:bg-brand-green/20 transition-colors disabled:opacity-30 cursor-pointer"
+                    title="Export current scenario as a local JSON file"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Export JSON
                   </button>
                 </div>
               </div>
@@ -595,6 +743,16 @@ export const ScenarioCard: React.FC<ScenarioCardProps> = ({
                               title="Load this scenario back into the markdown editor"
                             >
                               <Edit className="w-3 h-3 text-brand-green" /> Load
+                            </button>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleExportLibraryScenario(scItem);
+                              }}
+                              className="flex items-center gap-1 px-2 py-1 text-[9px] font-mono font-bold uppercase border border-brand-border hover:bg-brand-row text-brand-text transition-colors cursor-pointer"
+                              title="Export this saved scenario directly to a JSON file"
+                            >
+                              <Download className="w-3 h-3 text-brand-green" /> Export
                             </button>
                             <button
                               onClick={(e) => handleDeleteScenario(scItem.id, e)}

@@ -84,6 +84,13 @@ export interface Scenario {
     level_name?: string;
     properties?: Record<string, string>;
   };
+  research?: {
+    question?: string;
+    hypothesis?: string;
+    measurementFocus?: string[];
+    observationProtocol?: string;
+    expectedEmergencePatterns?: string[];
+  };
 }
 
 export interface ScenarioV2 {
@@ -152,4 +159,21 @@ export interface WorkspaceConfig {
   activeProviderId?: string;
   intervalMs?: number;
   lastAppliedAt?: string;
+}
+
+export interface BotDecisionTrace {
+  runId: string;
+  step: number;
+  botId: string;
+  botName: string;
+  providerId: string;
+  model: string;
+  observationSummary: string;
+  activeGoal: string;
+  selectedAction: string;
+  actionParameters: Record<string, unknown>;
+  reasonSummary: string;
+  confidence?: number;
+  rawResponseRedacted?: unknown;
+  timestamp: string;
 }

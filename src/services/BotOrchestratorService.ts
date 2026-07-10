@@ -286,24 +286,32 @@ export class BotOrchestratorService {
             `[SIMULATED PLANNER] No API key found for ${provider.name}. Procedural decision generated.`,
             bot.id,
             bot.name,
-            { rationale: decision.rationale }
+            { reason_summary: decision.reason_summary }
           );
         } else {
           // Real API Call!
           try {
-            decision = await LLMProviderService.getBotDecision(
+            const rawDecision = await LLMProviderService.getBotDecision(
               provider,
               systemInstruction,
               userPrompt,
               this.getResponseSchema()
             );
 
+            decision = {
+              reason_summary: rawDecision.reason_summary || rawDecision.rationale || '',
+              rationale: rawDecision.reason_summary || rawDecision.rationale || '',
+              action: rawDecision.action,
+              parameters: rawDecision.parameters,
+              message: rawDecision.message,
+            };
+
             eventStore.addEvent(
               EventType.LLM_CALL,
               `[REAL API CALL] ${provider.name} returned validated decision.`,
               bot.id,
               bot.name,
-              { rationale: decision.rationale, action: decision.action, parameters: decision.parameters }
+              { reason_summary: decision.reason_summary, action: decision.action, parameters: decision.parameters }
             );
           } catch (err: any) {
             // fallback gracefully on API rate limits / errors
@@ -361,7 +369,7 @@ You must analyze your current surroundings, objectives, and inventory, and selec
 You must reply strictly in JSON format. Do not write any normal conversational text outside the JSON.
 Your JSON response must match this schema:
 {
-  "rationale": "Explain your thought process briefly.",
+  "reason_summary": "Explain your thought process briefly.",
   "action": "move" | "harvest" | "place" | "craft" | "talk" | "idle",
   "parameters": {
     // For move: { "x": number, "y": number, "z": number }
@@ -403,7 +411,7 @@ What is your next action? Select the action and parameters carefully.`;
     return {
       type: 'OBJECT',
       properties: {
-        rationale: { type: 'STRING', description: 'Your strategic planning thought process.' },
+        reason_summary: { type: 'STRING', description: 'Your strategic planning thought process.' },
         action: { type: 'STRING', description: 'The validated action keyword (move, harvest, place, craft, talk, idle).' },
         parameters: {
           type: 'OBJECT',
@@ -411,7 +419,7 @@ What is your next action? Select the action and parameters carefully.`;
         },
         message: { type: 'STRING', description: 'Optional chat line broadcasted to other players.' },
       },
-      required: ['rationale', 'action', 'parameters'],
+      required: ['reason_summary', 'action', 'parameters'],
     };
   }
 
@@ -626,7 +634,7 @@ What is your next action? Select the action and parameters carefully.`;
     const goals = bot.goal.toLowerCase();
     const inventory = bot.inventory;
     
-    let rationale = '';
+    let reason_summary = '';
     let action = 'idle';
     let parameters: any = {};
     let message = '';
@@ -642,17 +650,17 @@ What is your next action? Select the action and parameters carefully.`;
           // check if close
           const dist = Math.sqrt(Math.pow(targetBlock.x - bot.x, 2) + Math.pow(targetBlock.z - bot.z, 2));
           if (dist <= 2) {
-            rationale = `Found oak log at [x: ${targetBlock.x}, z: ${targetBlock.z}] within close range. Harvesting now.`;
+            reason_summary = `Found oak log at [x: ${targetBlock.x}, z: ${targetBlock.z}] within close range. Harvesting now.`;
             action = 'harvest';
             parameters = { blockType: 'oak_log', x: targetBlock.x, y: 64, z: targetBlock.z };
           } else {
-            rationale = `Spotted oak log at [x: ${targetBlock.x}, z: ${targetBlock.z}] which is ${dist.toFixed(1)} blocks away. Approaching...`;
+            reason_summary = `Spotted oak log at [x: ${targetBlock.x}, z: ${targetBlock.z}] which is ${dist.toFixed(1)} blocks away. Approaching...`;
             action = 'move';
             parameters = { x: targetBlock.x, y: 64, z: targetBlock.z };
           }
         } else {
           // Wander/search
-          rationale = 'Searching nearby terrain chunks for oak trees to harvest.';
+          reason_summary = 'Searching nearby terrain chunks for oak trees to harvest.';
           action = 'move';
           parameters = { x: bot.x + Math.floor(Math.random() * 6) - 3, y: 64, z: bot.z + Math.floor(Math.random() * 6) - 3 };
           message = 'I am looking for some trees to cut!';
@@ -660,11 +668,11 @@ What is your next action? Select the action and parameters carefully.`;
       } else {
         // We have logs! Craft planks or crafting table
         if (planksCount < 4) {
-          rationale = `We have ${logsCount} oak logs. Crafting oak wood planks to start resource refinement.`;
+          reason_summary = `We have ${logsCount} oak logs. Crafting oak wood planks to start resource refinement.`;
           action = 'craft';
           parameters = { itemType: 'oak_planks', count: 1 };
         } else {
-          rationale = 'Crafting oak planks into a standard crafting table to proceed with tool forging.';
+          reason_summary = 'Crafting oak planks into a standard crafting table to proceed with tool forging.';
           action = 'craft';
           parameters = { itemType: 'crafting_table', count: 1 };
           message = 'Okay Sally, I have crafted a crafting table!';
@@ -675,25 +683,25 @@ What is your next action? Select the action and parameters carefully.`;
       const tableCount = inventory['crafting_table'] || 0;
       
       if (tableCount > 0) {
-        rationale = 'Setting down our crafting table on a flat grassy plain.';
+        reason_summary = 'Setting down our crafting table on a flat grassy plain.';
         action = 'place';
         parameters = { blockType: 'crafting_table', x: bot.x + 1, y: 64, z: bot.z };
       } else {
         // Coordinate with Lumberjack Bob
-        rationale = 'Standing by for wood logs delivery from Bob.';
+        reason_summary = 'Standing by for wood logs delivery from Bob.';
         action = 'talk';
         parameters = { recipient: 'LumberjackBob', message: 'Bob, send me the logs when you have them!' };
         message = 'Bob, did you gather the oak logs yet?';
       }
     } else {
       // Default explorer
-      rationale = 'Exploring the surrounding map layout procedurally.';
+      reason_summary = 'Exploring the surrounding map layout procedurally.';
       action = 'move';
       parameters = { x: bot.x + Math.floor(Math.random() * 8) - 4, y: 64, z: bot.z + Math.floor(Math.random() * 8) - 4 };
       message = 'This looks like a great world seed!';
     }
 
-    return { rationale, action, parameters, message };
+    return { reason_summary, rationale: reason_summary, action, parameters, message };
   }
 
   private addLogEvent(type: EventType, message: string, botId?: string, botName?: string) {

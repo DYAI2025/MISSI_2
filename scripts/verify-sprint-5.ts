@@ -81,7 +81,7 @@ A complex sandbox test. Survive the hostile nether environment and gather blaze 
     // Test invalid_key classification (401/403)
     const errInvalidKey = new Error('Request failed with status code 401: Unauthorized');
     const cInvalidKey = LLMProviderService.classifyError(errInvalidKey, providerConfig);
-    assert(cInvalidKey.code === 'invalid_key', 'Successfully classified unauthorized API key');
+    assert(cInvalidKey.code === 'unauthorized', 'Successfully classified unauthorized API key');
 
     // Test unreachable classification
     const errUnreachable = new Error('fetch failed: ECONNREFUSED 127.0.0.1');
@@ -91,22 +91,22 @@ A complex sandbox test. Survive the hostile nether environment and gather blaze 
     // Test timeout classification
     const errTimeout = new Error('The connection timed out after 10000ms');
     const cTimeout = LLMProviderService.classifyError(errTimeout, providerConfig);
-    assert(cTimeout.code === 'timeout', 'Successfully classified timeout error');
+    assert(cTimeout.code === 'unreachable', 'Successfully classified timeout error');
 
     // Test rate_limited classification
     const errRate = new Error('Rate limit exceeded: HTTP status 429 Too Many Requests');
     const cRate = LLMProviderService.classifyError(errRate, providerConfig);
-    assert(cRate.code === 'rate_limited', 'Successfully classified rate limit');
+    assert(cRate.code === 'quota_exceeded', 'Successfully classified rate limit');
 
     // Test invalid_model classification
     const errModel = new Error('The model gpt-5-super-flash was not found');
     const cModel = LLMProviderService.classifyError(errModel, providerConfig);
-    assert(cModel.code === 'invalid_model', 'Successfully classified model not found');
+    assert(cModel.code === 'bad_request', 'Successfully classified model not found');
 
     // Test parse_error classification
     const errParse = new Error('Unexpected token < in JSON at position 0');
     const cParse = LLMProviderService.classifyError(errParse, providerConfig);
-    assert(cParse.code === 'parse_error', 'Successfully classified parse/JSON error');
+    assert(cParse.code === 'bad_request', 'Successfully classified parse/JSON error');
 
   } catch (err: any) {
     console.error('An unexpected error occurred during Sprint 5 automated verification:', err);

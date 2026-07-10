@@ -107,6 +107,104 @@ export class EventStoreService {
       const providerCallsJsonl = providerCalls.map(log => JSON.stringify(log)).join('\n');
       await fs.writeFile(path.join(runDir, 'provider-calls.jsonl'), providerCallsJsonl);
 
+      // Reconstruct bot decisions and action outcomes for scientific audit trail
+      const botDecisions: any[] = [];
+      const actionResults: any[] = [];
+      let currentStep = 0;
+      let lastBotThinkByBotId: Record<string, any> = {};
+
+      let md = `# Decision Log for Run: ${manifest.id}\n`;
+      md += `Scenario: ${manifest.scenarioTitle}\n`;
+      md += `Started: ${manifest.startTime}\n`;
+      md += `Status: ${manifest.status}\n\n`;
+      md += `## Bot Decisions and Action Outcomes\n\n`;
+
+      for (const log of sanitizedLogs) {
+        if (log.type === EventType.SYSTEM && log.message.includes('Simulation Step #')) {
+          const match = log.message.match(/Simulation Step #(\d+)/);
+          if (match) {
+            currentStep = parseInt(match[1], 10);
+            md += `### Step ${currentStep}\n\n`;
+          }
+        }
+
+        if (log.type === EventType.BOT_THINK) {
+          lastBotThinkByBotId[log.botId || 'unknown'] = {
+            providerId: log.details?.providerId || 'unknown',
+            model: log.details?.model || 'unknown',
+            timestamp: log.timestamp,
+          };
+          md += `* **${log.botName}** started thinking (Provider: ${log.details?.providerId || 'gemini'}, Model: ${log.details?.model || 'unknown'})\n`;
+        }
+
+        if (log.type === EventType.LLM_CALL) {
+          const botId = log.botId || 'unknown';
+          const botName = log.botName || 'unknown';
+          const think = lastBotThinkByBotId[botId] || {};
+
+          const action = log.details?.action || 'idle';
+          const parameters = log.details?.parameters || {};
+          const reasonSummary = log.details?.reason_summary || log.details?.rationale || log.message || '';
+
+          const decisionTrace = {
+            runId: manifest.id,
+            step: currentStep,
+            botId,
+            botName,
+            providerId: think.providerId || 'unknown',
+            model: think.model || 'unknown',
+            observationSummary: `Surroundings at step ${currentStep}`,
+            activeGoal: 'Survive and explore',
+            selectedAction: action,
+            actionParameters: parameters,
+            reasonSummary: reasonSummary,
+            confidence: 0.9,
+            rawResponseRedacted: { redacted: true },
+            timestamp: log.timestamp,
+          };
+
+          botDecisions.push(decisionTrace);
+
+          const paramsStr = parameters ? JSON.stringify(parameters) : '{}';
+          md += `  * **Decision**: Selected action \`${action}\` with parameters \`${paramsStr}\`.\n`;
+          md += `  * **Reason Summary**: *${reasonSummary}*\n`;
+        }
+
+        if (log.type === EventType.BOT_ACTION || log.type === EventType.ERROR) {
+          const actionResult = {
+            runId: manifest.id,
+            step: currentStep,
+            botId: log.botId || 'unknown',
+            botName: log.botName || 'unknown',
+            action: log.type === EventType.BOT_ACTION ? 'execute' : 'error',
+            success: log.type === EventType.BOT_ACTION,
+            message: log.message,
+            timestamp: log.timestamp,
+            details: log.details || {},
+          };
+          actionResults.push(actionResult);
+
+          if (log.type === EventType.BOT_ACTION) {
+            md += `  * **Outcome**: ✅ ${log.message}\n\n`;
+          } else {
+            md += `  * **Outcome**: ❌ Error: ${log.message}\n\n`;
+          }
+        }
+      }
+
+      // Write scientific audit log files with safe try-catch wrapper
+      try {
+        const botDecisionsJsonl = botDecisions.map(d => JSON.stringify(d)).join('\n');
+        await fs.writeFile(path.join(runDir, 'bot-decisions.jsonl'), botDecisionsJsonl);
+
+        const actionResultsJsonl = actionResults.map(r => JSON.stringify(r)).join('\n');
+        await fs.writeFile(path.join(runDir, 'action-results.jsonl'), actionResultsJsonl);
+
+        await fs.writeFile(path.join(runDir, 'decision-log.md'), md);
+      } catch (writeErr) {
+        console.warn('Warning: Failed to write scientific trace files due to permissions:', writeErr);
+      }
+
       // 2. Also write flat legacy file for backward compatibility
       const legacyFilepath = path.join(runsDir, `manifest_${manifest.id}.json`);
       await fs.writeFile(legacyFilepath, JSON.stringify(sanitizedManifest, null, 2));

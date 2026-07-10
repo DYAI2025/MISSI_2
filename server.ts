@@ -180,6 +180,8 @@ async function startServer() {
     const { id } = req.params;
     let providerType: string | undefined = undefined;
     let finalDefaultModel = '';
+    let effectiveApiKey = '';
+    let finalCustomUrl: string | undefined = undefined;
     try {
       const { type, apiKey, customUrl, defaultModel } = req.body;
       
@@ -196,9 +198,9 @@ async function startServer() {
         });
       }
 
-      let effectiveApiKey = apiKey;
+      effectiveApiKey = apiKey || '';
       if (effectiveApiKey === undefined || effectiveApiKey === '' || effectiveApiKey.startsWith('*')) {
-        effectiveApiKey = secrets.getSecret(id);
+        effectiveApiKey = secrets.getSecret(id) || '';
         if (!effectiveApiKey) {
           if (providerType === 'gemini') {
             effectiveApiKey = process.env.GEMINI_API_KEY || '';
@@ -213,7 +215,7 @@ async function startServer() {
       }
 
       const storedProvider = settings.getProviders().find(p => p.id === id);
-      const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
+      finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
       finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
 
       const config = {
@@ -256,8 +258,9 @@ async function startServer() {
         id,
         type: (providerType || 'gemini') as any,
         name: id,
-        apiKey: '',
-        defaultModel: finalDefaultModel
+        apiKey: effectiveApiKey || '',
+        defaultModel: finalDefaultModel,
+        customUrl: finalCustomUrl || undefined,
       };
       const classified = LLMProviderService.classifyError(err, configMock);
       await settings.updateProviderLastTest(id, { success: false, message: classified.message, error: classified.message, code: classified.code });
@@ -277,6 +280,8 @@ async function startServer() {
 
   app.post('/api/provider/test', async (req, res) => {
     const { id, type, apiKey, customUrl, defaultModel } = req.body;
+    let effectiveApiKey = '';
+    let finalCustomUrl: string | undefined = undefined;
     try {
       if (!id || !type) {
         return res.status(200).json({
@@ -288,9 +293,9 @@ async function startServer() {
         });
       }
 
-      let effectiveApiKey = apiKey;
+      effectiveApiKey = apiKey || '';
       if (effectiveApiKey === undefined || effectiveApiKey === '' || effectiveApiKey.startsWith('*')) {
-        effectiveApiKey = secrets.getSecret(id);
+        effectiveApiKey = secrets.getSecret(id) || '';
         if (!effectiveApiKey) {
           if (type === 'gemini') {
             effectiveApiKey = process.env.GEMINI_API_KEY || '';
@@ -305,7 +310,7 @@ async function startServer() {
       }
 
       const storedProvider = settings.getProviders().find(p => p.id === id);
-      const finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
+      finalCustomUrl = customUrl !== undefined ? customUrl : storedProvider?.customUrl;
       const finalDefaultModel = defaultModel !== undefined ? defaultModel : (storedProvider?.defaultModel || '');
 
       const config = {
@@ -348,8 +353,9 @@ async function startServer() {
         id: id || 'unknown',
         type: (type || 'gemini') as any,
         name: id || 'unknown',
-        apiKey: '',
-        defaultModel: defaultModel || ''
+        apiKey: effectiveApiKey || '',
+        defaultModel: defaultModel || '',
+        customUrl: finalCustomUrl || undefined,
       };
       const classified = LLMProviderService.classifyError(err, configMock);
       if (id) {
@@ -401,25 +407,13 @@ async function startServer() {
     const parts = cleanCommand.split(/\s+/);
     const cmdName = parts[0].toLowerCase();
 
-    const blockedCommands = [
-      'stop', 'ban', 'ban-ip', 'pardon', 'pardon-ip', 'op', 'deop', 
-      'whitelist', 'kick', 'save-all', 'save-off', 'fill', 'clone', 
-      'publish', 'reload', 'debug'
-    ];
+    // Strict Sprint 6 command whitelist
+    const whitelist = ['say', 'tellraw', 'time', 'weather', 'gamerule', 'difficulty', 'list', 'whitelist'];
 
-    if (blockedCommands.includes(cmdName)) {
-      return res.status(400).json({
-        error: `Command "${cmdName}" is blocked for security and server stability.`
+    if (!whitelist.includes(cmdName)) {
+      return res.status(403).json({
+        error: `Command execution of "${cmdName}" is blocked for security and compliance. Only the following commands are allowed: ${whitelist.join(', ')}.`
       });
-    }
-
-    if (cmdName === 'gamemode') {
-      const mode = parts[1]?.toLowerCase();
-      if (mode === 'creative' || mode === 'c' || mode === '1') {
-        return res.status(400).json({
-          error: `Switching to Creative mode via command execution is blocked for compliance and simulation accuracy.`
-        });
-      }
     }
 
     serverService.executeCommand(command);
